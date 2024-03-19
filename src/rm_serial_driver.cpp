@@ -124,18 +124,9 @@ void RMSerialDriver::receiveData()
           t.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
           t.header.frame_id = "odom";
           t.child_frame_id = "gimbal_link";
-          tf2::Quaternion q;
-          q.setRPY(packet.roll, packet.pitch, packet.yaw);
+          tf2::Quaternion q(packet.q[0], packet.q[1], packet.q[2], packet.q[3]);
           t.transform.rotation = tf2::toMsg(q);
           tf_broadcaster_->sendTransform(t);
-
-          if (abs(packet.aim_x) > 0.01) {
-            aiming_point_.header.stamp = this->now();
-            aiming_point_.pose.position.x = packet.aim_x;
-            aiming_point_.pose.position.y = packet.aim_y;
-            aiming_point_.pose.position.z = packet.aim_z;
-            marker_pub_->publish(aiming_point_);
-          }
         } else {
           RCLCPP_ERROR(get_logger(), "CRC error!");
         }
