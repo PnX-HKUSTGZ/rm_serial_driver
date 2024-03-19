@@ -23,6 +23,8 @@
 #include <vector>
 
 #include "auto_aim_interfaces/msg/target.hpp"
+#include <auto_aim_interfaces/msg/firecontrol.hpp>
+
 
 namespace rm_serial_driver
 {
@@ -38,7 +40,7 @@ private:
 
   void receiveData();
 
-  void sendData(auto_aim_interfaces::msg::Target::SharedPtr msg);
+  void sendData(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg);
 
   void reopenPort();
 
@@ -69,7 +71,7 @@ private:
   double timestamp_offset_ = 0;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
-  rclcpp::Subscription<auto_aim_interfaces::msg::Target>::SharedPtr target_sub_;
+  rclcpp::Subscription<auto_aim_interfaces::msg::Firecontrol>::SharedPtr target_sub_;
 
   // For debug usage
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;

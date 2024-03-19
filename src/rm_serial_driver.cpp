@@ -20,6 +20,8 @@
 #include "rm_serial_driver/crc.hpp"
 #include "rm_serial_driver/packet.hpp"
 #include "rm_serial_driver/rm_serial_driver.hpp"
+#include <auto_aim_interfaces/msg/firecontrol.hpp>
+
 
 namespace rm_serial_driver
 {
@@ -70,8 +72,8 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   aiming_point_.lifetime = rclcpp::Duration::from_seconds(0.1);
 
   // Create Subscription
-  target_sub_ = this->create_subscription<auto_aim_interfaces::msg::Target>(
-    "/tracker/target", rclcpp::SensorDataQoS(),
+  target_sub_ = this->create_subscription<auto_aim_interfaces::msg::Firecontrol>(
+    "/firecontrol", rclcpp::SensorDataQoS(),
     std::bind(&RMSerialDriver::sendData, this, std::placeholders::_1));
 }
 
@@ -141,7 +143,7 @@ void RMSerialDriver::receiveData()
   }
 }
 
-void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Target::SharedPtr msg)
+void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg)
 {
   const static std::map<std::string, uint8_t> id_unit8_map{
     {"", 0},  {"outpost", 0}, {"1", 1}, {"1", 1},     {"2", 2},
@@ -151,18 +153,9 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Target::SharedPtr 
     SendPacket packet;
     packet.tracking = msg->tracking;
     packet.id = id_unit8_map.at(msg->id);
-    packet.armors_num = msg->armors_num;
-    packet.x = msg->position.x;
-    packet.y = msg->position.y;
-    packet.z = msg->position.z;
+    packet.pitch = msg->pitch;
     packet.yaw = msg->yaw;
-    packet.vx = msg->velocity.x;
-    packet.vy = msg->velocity.y;
-    packet.vz = msg->velocity.z;
-    packet.v_yaw = msg->v_yaw;
-    packet.r1 = msg->radius_1;
-    packet.r2 = msg->radius_2;
-    packet.dz = msg->dz;
+
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
     std::vector<uint8_t> data = toVector(packet);
