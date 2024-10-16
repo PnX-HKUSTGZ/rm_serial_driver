@@ -126,12 +126,13 @@ void RMSerialDriver::receiveData()
           t.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
           t.header.frame_id = "odom";
           t.child_frame_id = "gimbal_link";
-          tf2::Quaternion q(packet.q[1], packet.q[2], packet.q[3], packet.q[0]);
           tf2::Quaternion q_rot;
           double PI = 3.1415926;
-          q_rot.setRPY(0, 0, PI/2 );
-          q = q_rot * q;
-          t.transform.rotation = tf2::toMsg(q);
+          q_rot.setRPY(0, 0, PI/2);
+          tf2::Quaternion q(packet.q[1], packet.q[2], packet.q[3], packet.q[0]);
+        
+          q_rot = q * q_rot;
+          t.transform.rotation = tf2::toMsg(q_rot);
           tf_broadcaster_->sendTransform(t);
         } else {
           RCLCPP_ERROR(get_logger(), "CRC error!");
