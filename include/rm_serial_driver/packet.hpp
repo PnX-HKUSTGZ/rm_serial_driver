@@ -23,8 +23,8 @@ struct ReceivePacket
 struct SendPacket
 {
   uint8_t header = 0xA5;
-  bool tracking : 1;
-  bool iffire : 1;
+  uint8_t tracking : 1;
+  uint8_t iffire : 1;
   uint8_t id : 3;          // 0-outpost 6-guard 7-base
   uint8_t reserved : 3;
   

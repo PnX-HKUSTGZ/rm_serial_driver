@@ -112,10 +112,10 @@ void RMSerialDriver::receiveData()
         bool crc_ok =
           crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
         if (crc_ok) {
-          if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
-            setParam(rclcpp::Parameter("detect_color", packet.detect_color));
-            previous_receive_color_ = packet.detect_color;
-          }
+          // if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
+          //   //setParam(rclcpp::Parameter("detect_color", packet.detect_color));
+          //   //previous_receive_color_ = packet.detect_color;
+          // }
 
           if (packet.reset_tracker) {
             resetTracker();
@@ -127,13 +127,14 @@ void RMSerialDriver::receiveData()
           t.header.frame_id = "odom";
           t.child_frame_id = "gimbal_link";
           tf2::Quaternion q_rot;
-          double PI = 3.1415926;
-          q_rot.setRPY(0, 0, PI/2);
-          tf2::Quaternion q(packet.q[1], packet.q[2], packet.q[3], packet.q[0]);
+          //double PI = 3.1415926;
+          q_rot.setRPY(0, 0, 0);
+          tf2::Quaternion q(packet.q[0] ,packet.q[1], packet.q[2], packet.q[3]);
         
           q_rot = q * q_rot;
           t.transform.rotation = tf2::toMsg(q_rot);
           tf_broadcaster_->sendTransform(t);
+          
         } else {
           RCLCPP_ERROR(get_logger(), "CRC error!");
         }
@@ -156,10 +157,12 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
 
   try {
     SendPacket packet;
+
     packet.tracking = msg->tracking;
     packet.id = id_unit8_map.at(msg->id);
     packet.pitch = msg->pitch;
     packet.yaw = msg->yaw;
+    packet.iffire = msg->iffire;
 
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
