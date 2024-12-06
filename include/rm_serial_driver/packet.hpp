@@ -15,7 +15,8 @@ struct ReceivePacket
   uint8_t header = 0x5A;
   uint8_t detect_color : 1;  // 0-red 1-blue
   bool reset_tracker : 1;
-  uint8_t reserved : 6;
+  uint8_t set_mode : 2; // 0-AUTO_AIM_SLOPE, 1-AUTO_AIM_FLAT, 2-SMALL_RUNE, 3-BIG_RUNE
+  uint8_t reserved : 4;
   float q[4]; // x y z w
   uint16_t checksum = 0;
 } __attribute__((packed));

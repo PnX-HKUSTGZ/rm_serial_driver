@@ -21,6 +21,7 @@
 #include "rm_serial_driver/packet.hpp"
 #include "rm_serial_driver/rm_serial_driver.hpp"
 #include <auto_aim_interfaces/msg/firecontrol.hpp>
+#include <auto_aim_interfaces/srv/set_mode.hpp>
 
 
 namespace rm_serial_driver
@@ -47,6 +48,10 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
   // Tracker reset service client
   reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
+
+  // set mode service client
+  set_rune_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
+  set_car_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector/set_mode");
 
   try {
     serial_driver_->init_port(device_name_, *device_config_);
@@ -120,6 +125,9 @@ void RMSerialDriver::receiveData()
           if (packet.reset_tracker) {
             resetTracker();
           }
+
+          setRuneMode(packet.set_mode);
+          setCarMode(packet.set_mode);
 
           geometry_msgs::msg::TransformStamped t;
           timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
@@ -314,6 +322,56 @@ void RMSerialDriver::resetTracker()
   auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
   reset_tracker_client_->async_send_request(request);
   RCLCPP_INFO(get_logger(), "Reset tracker!");
+}
+
+void RMSerialDriver::setRuneMode(uint8_t mode)
+{
+  if (!set_rune_mode_client_->service_is_ready()) {
+    RCLCPP_WARN(get_logger(), "Service not ready, skipping set rune mode");
+    return;
+  }
+  
+
+  auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
+  request->mode = mode;
+
+  auto result_future = set_rune_mode_client_->async_send_request(request);
+
+  try {
+    auto result = result_future.get();
+    if (result->success) {
+      RCLCPP_INFO(get_logger(), "Successfully set rune mode to %d", mode);
+    } else {
+      RCLCPP_ERROR(get_logger(), "Failed to set rune mode: %s", result->message.c_str());
+    }
+  } catch (const std::exception &ex) {
+    RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
+  }
+}
+
+void RMSerialDriver::setCarMode(uint8_t mode)
+{
+  if (!set_car_mode_client_->service_is_ready()) {
+    RCLCPP_WARN(get_logger(), "Service not ready, skipping set car mode");
+    return;
+  }
+  
+
+  auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
+  request->mode = mode;
+
+  auto result_future = set_car_mode_client_->async_send_request(request);
+
+  try {
+    auto result = result_future.get();
+    if (result->success) {
+      RCLCPP_INFO(get_logger(), "Successfully set car mode to %d", mode);
+    } else {
+      RCLCPP_ERROR(get_logger(), "Failed to set car mode: %s", result->message.c_str());
+    }
+  } catch (const std::exception &ex) {
+    RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
+  }
 }
 
 }  // namespace rm_serial_driver
