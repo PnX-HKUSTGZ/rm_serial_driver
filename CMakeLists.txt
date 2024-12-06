@@ -23,9 +23,8 @@ ament_auto_find_build_dependencies()
 ## Build ##
 ###########
 
-ament_auto_add_library(${PROJECT_NAME} SHARED
-  src/rm_serial_driver.cpp
-  src/crc.cpp
+ament_auto_add_library(${PROJECT_NAME} SHARED DIRECTORY
+  src
 )
 
 rclcpp_components_register_node(${PROJECT_NAME}
