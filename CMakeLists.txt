@@ -32,6 +32,11 @@ rclcpp_components_register_node(${PROJECT_NAME}
   EXECUTABLE ${PROJECT_NAME}_node
 )
 
+rclcpp_components_register_node(${PROJECT_NAME}
+  PLUGIN rm_serial_driver::VirtualSerialNode
+  EXECUTABLE virtual_serial_node
+)
+
 #############
 ## Testing ##
 #############
