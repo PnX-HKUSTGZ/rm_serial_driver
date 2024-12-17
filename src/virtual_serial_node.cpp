@@ -38,6 +38,9 @@ public:
     this->declare_parameter("vision_mode", static_cast<int>(0));
 
     has_rune_ = this->declare_parameter("has_rune", true);
+    this->declare_parameter("roll", 0.0);
+    this->declare_parameter("pitch", 0.0);
+    this->declare_parameter("yaw", 0.0);
 
     transform_stamped_.header.frame_id = "odom";
     transform_stamped_.child_frame_id = "gimbal_link";
@@ -47,10 +50,6 @@ public:
       this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector/set_mode");
     set_mode_clients_.emplace(autoaim_set_mode_client_1->get_service_name(),
                               autoaim_set_mode_client_1);
-    auto autoaim_set_mode_client_2 =
-      this->create_client<auto_aim_interfaces::srv::SetMode>("armor_solver/set_mode");
-    set_mode_clients_.emplace(autoaim_set_mode_client_2->get_service_name(),
-                              autoaim_set_mode_client_2);
     if (has_rune_) {
       auto client1 = this->create_client<auto_aim_interfaces::srv::SetMode>("rune_detector/set_mode");
       set_mode_clients_.emplace(client1->get_service_name(), client1);
