@@ -126,8 +126,11 @@ void RMSerialDriver::receiveData()
             resetTracker();
           }
 
-          setRuneMode(packet.set_mode);
-          setCarMode(packet.set_mode);
+          if(packet.set_mode != mode_){
+            mode_ = packet.set_mode;
+            setRuneMode(packet.set_mode);
+            setCarMode(packet.set_mode);
+          }
 
           geometry_msgs::msg::TransformStamped t;
           timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();

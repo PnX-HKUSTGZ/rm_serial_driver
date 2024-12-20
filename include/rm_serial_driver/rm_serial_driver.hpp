@@ -85,6 +85,9 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
 
   std::thread receive_thread_;
+
+  // mode
+  uint8_t mode_ = -1;
 };
 }  // namespace rm_serial_driver
 
