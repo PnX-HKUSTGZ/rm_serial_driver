@@ -74,7 +74,13 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   // Create Subscription
   target_sub_ = this->create_subscription<auto_aim_interfaces::msg::Firecontrol>(
     "/firecontrol", rclcpp::SensorDataQoS(),
-    std::bind(&RMSerialDriver::sendData, this, std::placeholders::_1));
+    std::bind(&RMSerialDriver::aimPointCallback, this, std::placeholders::_1));
+
+  nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+    "/cmd_vel_chassis", rclcpp::SensorDataQoS(),
+    std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
+    
+
 }
 
 RMSerialDriver::~RMSerialDriver()
@@ -152,14 +158,14 @@ void RMSerialDriver::receiveData()
   }
 }
 
-void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg)
+void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg)
 {
   const static std::map<std::string, uint8_t> id_unit8_map{
     {"", 0},  {"outpost", 0}, {"1", 1}, {"1", 1},     {"2", 2},
     {"3", 3}, {"4", 4},       {"5", 5}, {"guard", 6}, {"base", 7}};
 
   try {
-    SendPacket packet;
+    SendAimPacket packet;
 
     packet.tracking = msg->tracking;
     packet.id = id_unit8_map.at(msg->id);
@@ -171,6 +177,7 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
 
     std::vector<uint8_t> data = toVector(packet);
 
+    std::lock_guard<std::mutex> lock(mutex_);
     serial_driver_->port()->send(data);
 
     std_msgs::msg::Float64 latency;
@@ -178,9 +185,34 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
     RCLCPP_DEBUG_STREAM(get_logger(), "Total latency: " + std::to_string(latency.data) + "ms");
     latency_pub_->publish(latency);
   } catch (const std::exception & ex) {
-    RCLCPP_ERROR(get_logger(), "Error while sending data: %s", ex.what());
+    RCLCPP_ERROR(get_logger(), "Error while sending auto-aim data: %s", ex.what());
     reopenPort();
   }
+}
+
+void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+{
+  try {
+    SendNavPacket packet;
+
+    packet.linear_x = static_cast<float>(msg->linear.x);
+    packet.linear_y = static_cast<float>(msg->linear.y);
+    packet.linear_z = static_cast<float>(msg->linear.z);
+    packet.angular_x = static_cast<float>(msg->angular.x);
+    packet.angular_y = static_cast<float>(msg->angular.y);
+    packet.angular_z = static_cast<float>(msg->angular.z);
+    std::cout << "linear_x: " << packet.linear_x << std::endl;
+
+    crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+
+    std::vector<uint8_t> data = toVector(packet);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    serial_driver_->port()->send(data);
+    } catch (const std::exception & ex) {
+      RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
+      reopenPort();
+    }
 }
 
 void RMSerialDriver::getParams()

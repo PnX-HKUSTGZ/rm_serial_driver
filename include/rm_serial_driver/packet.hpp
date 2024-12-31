@@ -20,7 +20,7 @@ struct ReceivePacket
   uint16_t checksum = 0;
 } __attribute__((packed));
 
-struct SendPacket
+struct SendAimPacket
 {
   uint8_t header = 0xA5;
   uint8_t tracking : 1;
@@ -34,6 +34,23 @@ struct SendPacket
   uint16_t checksum = 0;
 } __attribute__((packed));
 
+struct SendNavPacket
+{
+  uint8_t header = 0xA6;  // Packet header, fixed value 0xA5
+
+  // Linear velocities
+  float linear_x;
+  float linear_y;
+  float linear_z;
+
+  // Angular velocities
+  float angular_x;
+  float angular_y;
+  float angular_z;
+
+  uint16_t checksum = 0;  // Checksum for error detection
+} __attribute__((packed));
+
 inline ReceivePacket fromVector(const std::vector<uint8_t> & data)
 {
   ReceivePacket packet;
@@ -41,14 +58,16 @@ inline ReceivePacket fromVector(const std::vector<uint8_t> & data)
   return packet;
 }
 
-inline std::vector<uint8_t> toVector(const SendPacket & data)
+template <typename T>
+inline std::vector<uint8_t> toVector(const T & data)
 {
-  std::vector<uint8_t> packet(sizeof(SendPacket));
+  std::vector<uint8_t> packet(sizeof(T));
   std::copy(
     reinterpret_cast<const uint8_t *>(&data),
-    reinterpret_cast<const uint8_t *>(&data) + sizeof(SendPacket), packet.begin());
+    reinterpret_cast<const uint8_t *>(&data) + sizeof(T), packet.begin());
   return packet;
 }
+
 
 }  // namespace rm_serial_driver
 

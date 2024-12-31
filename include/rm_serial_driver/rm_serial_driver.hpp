@@ -40,7 +40,9 @@ private:
 
   void receiveData();
 
-  void sendData(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg);
+  void aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg);
+
+  void navCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
 
   void reopenPort();
 
@@ -53,6 +55,7 @@ private:
   std::string device_name_;
   std::unique_ptr<drivers::serial_driver::SerialPortConfig> device_config_;
   std::unique_ptr<drivers::serial_driver::SerialDriver> serial_driver_;
+  std::mutex mutex_;
 
   // Param client to set detect_colr
   using ResultFuturePtr = std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>>;
@@ -72,6 +75,8 @@ private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   rclcpp::Subscription<auto_aim_interfaces::msg::Firecontrol>::SharedPtr target_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr nav_sub_;
+
 
   // For debug usage
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;
