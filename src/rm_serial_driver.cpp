@@ -333,7 +333,8 @@ void RMSerialDriver::resetTracker()
 
 bool RMSerialDriver::setRuneMode(uint8_t mode)
 {
-  if (!set_rune_mode_client_->service_is_ready()) {
+  auto detector_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("rune_detector/set_mode");
+  if (!set_rune_mode_client_->service_is_ready() || !detector_client_->service_is_ready()) {
     RCLCPP_WARN(get_logger(), "Service not ready, skipping set rune mode");
     return 0;
   }
@@ -342,15 +343,17 @@ bool RMSerialDriver::setRuneMode(uint8_t mode)
   auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
   request->mode = mode;
 
-  auto result_future = set_rune_mode_client_->async_send_request(request);
+  auto result_tracker_future = set_rune_mode_client_->async_send_request(request);
+  auto result_detector_future = detector_client_->async_send_request(request);
 
   try {
-    auto result = result_future.get();
-    if (result->success) {
+    auto result1 = result_tracker_future.get();
+    auto result2 = result_detector_future.get();
+    if (result1->success && result2->success) {
       RCLCPP_INFO(get_logger(), "Successfully set rune mode to %d", mode);
       return true;
     } else {
-      RCLCPP_ERROR(get_logger(), "Failed to set rune mode: %s", result->message.c_str());
+      RCLCPP_ERROR(get_logger(), "Failed to set rune mode: %s and %s", result1->message.c_str(), result2->message.c_str());
     }
   } catch (const std::exception &ex) {
     RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
