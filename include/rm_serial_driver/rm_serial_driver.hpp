@@ -49,8 +49,8 @@ private:
 
   void resetTracker();
 
-  void setRuneMode(uint8_t mode); 
-  void setCarMode(uint8_t mode); 
+  bool setRuneMode(uint8_t mode); 
+  bool setCarMode(uint8_t mode); 
 
   // Serial port
   std::unique_ptr<IoContext> owned_ctx_;

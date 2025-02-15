@@ -3,6 +3,7 @@
 
 #include <tf2/LinearMath/Quaternion.h>
 
+#include <iostream>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 #include <rclcpp/utilities.hpp>
@@ -127,9 +128,9 @@ void RMSerialDriver::receiveData()
           }
 
           if(packet.set_mode != mode_){
-            mode_ = packet.set_mode;
-            setRuneMode(packet.set_mode);
-            setCarMode(packet.set_mode);
+            if(setRuneMode(packet.set_mode) && setCarMode(packet.set_mode)){
+              mode_ = packet.set_mode;
+            }
           }
 
           geometry_msgs::msg::TransformStamped t;
@@ -330,11 +331,11 @@ void RMSerialDriver::resetTracker()
   RCLCPP_INFO(get_logger(), "Reset tracker!");
 }
 
-void RMSerialDriver::setRuneMode(uint8_t mode)
+bool RMSerialDriver::setRuneMode(uint8_t mode)
 {
   if (!set_rune_mode_client_->service_is_ready()) {
     RCLCPP_WARN(get_logger(), "Service not ready, skipping set rune mode");
-    return;
+    return 0;
   }
   
 
@@ -347,19 +348,21 @@ void RMSerialDriver::setRuneMode(uint8_t mode)
     auto result = result_future.get();
     if (result->success) {
       RCLCPP_INFO(get_logger(), "Successfully set rune mode to %d", mode);
+      return true;
     } else {
       RCLCPP_ERROR(get_logger(), "Failed to set rune mode: %s", result->message.c_str());
     }
   } catch (const std::exception &ex) {
     RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
   }
+  return false;
 }
 
-void RMSerialDriver::setCarMode(uint8_t mode)
+bool RMSerialDriver::setCarMode(uint8_t mode)
 {
   if (!set_car_mode_client_->service_is_ready()) {
     RCLCPP_WARN(get_logger(), "Service not ready, skipping set car mode");
-    return;
+    return 0;
   }
   
 
@@ -372,12 +375,14 @@ void RMSerialDriver::setCarMode(uint8_t mode)
     auto result = result_future.get();
     if (result->success) {
       RCLCPP_INFO(get_logger(), "Successfully set car mode to %d", mode);
+      return true;
     } else {
       RCLCPP_ERROR(get_logger(), "Failed to set car mode: %s", result->message.c_str());
     }
   } catch (const std::exception &ex) {
     RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
   }
+  return false;
 }
 
 }  // namespace rm_serial_driver
