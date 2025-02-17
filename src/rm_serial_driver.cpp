@@ -168,7 +168,7 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
 {
   const static std::map<std::string, uint8_t> id_unit8_map{
     {"", 0},  {"outpost", 0}, {"1", 1}, {"1", 1},     {"2", 2},
-    {"3", 3}, {"4", 4},       {"5", 5}, {"guard", 6}, {"base", 7}};
+    {"3", 3}, {"4", 4},       {"5", 5}, {"guard", 6}, {"base", 7}, {"rune", 6}};
 
   try {
     SendPacket packet;
