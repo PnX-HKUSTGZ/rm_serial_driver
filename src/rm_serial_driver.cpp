@@ -144,7 +144,7 @@ void RMSerialDriver::receiveData()
           tf2::Quaternion q(packet.q[0] ,packet.q[1], packet.q[2], packet.q[3]);
           double roll, pitch, yaw; 
           tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-          q.setRPY(pitch, -roll, yaw);
+          q.setRPY(yaw, -pitch, roll);
         
           q_rot = q * q_rot;
           t.transform.rotation = tf2::toMsg(q_rot);
