@@ -127,12 +127,12 @@ void RMSerialDriver::receiveData()
           t.header.frame_id = "odom";
           t.child_frame_id = "gimbal_link";
           tf2::Quaternion q_rot;
-          //double PI = 3.1415926;
-          q_rot.setRPY(0, 0, 0);
+          double PI = 3.1415926;
+          q_rot.setRPY(0, 0, PI);
           tf2::Quaternion q(packet.q[0] ,packet.q[1], packet.q[2], packet.q[3]);
           double roll, pitch, yaw; 
           tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-          q.setRPY(yaw, -pitch, roll);
+          q.setRPY(-yaw, pitch, -roll);
         
           q_rot = q * q_rot;
           t.transform.rotation = tf2::toMsg(q_rot);
