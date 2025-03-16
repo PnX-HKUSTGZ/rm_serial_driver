@@ -73,11 +73,11 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
   // Create Subscription
   target_sub_ = this->create_subscription<auto_aim_interfaces::msg::Firecontrol>(
-    "/firecontrol", rclcpp::SensorDataQoS(),
+    "/firecontrol", rclcpp::QoS(rclcpp::KeepLast(1)),
     std::bind(&RMSerialDriver::aimPointCallback, this, std::placeholders::_1));
 
   nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
-    "/cmd_vel_chassis", rclcpp::SensorDataQoS(),
+    "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
     std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
     
 
@@ -172,6 +172,7 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
     packet.pitch = msg->pitch;
     packet.yaw = msg->yaw;
     packet.iffire = msg->iffire;
+    std::cout << "pitch: " << packet.pitch << std::endl;
 
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
@@ -179,6 +180,7 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 
     std::lock_guard<std::mutex> lock(mutex_);
     serial_driver_->port()->send(data);
+
 
     std_msgs::msg::Float64 latency;
     latency.data = (this->now() - msg->header.stamp).seconds() * 1000.0;
@@ -192,6 +194,8 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
+  RCLCPP_INFO(get_logger(), "navCallback called");
+
   try {
     SendNavPacket packet;
 
@@ -209,10 +213,11 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 
     std::lock_guard<std::mutex> lock(mutex_);
     serial_driver_->port()->send(data);
-    } catch (const std::exception & ex) {
-      RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
-      reopenPort();
-    }
+    std::cout<<packet.linear_x<<" "<<packet.linear_y<<" "<<packet.linear_z<<" "<<packet.angular_x<<" "<<packet.angular_y<<" "<<packet.angular_z<<std::endl;
+  } catch (const std::exception & ex) {
+    RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
+    reopenPort();
+  }
 }
 
 void RMSerialDriver::getParams()
