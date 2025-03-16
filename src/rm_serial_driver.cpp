@@ -41,6 +41,8 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   // Create Publisher
   latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
   marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/aiming_point", 10);
+  sentry_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/ifhealth", 10);
+  game_start_pub_ = this->create_publisher<std_msgs::msg::Bool>("/ifgamestart", 10);
 
   // Detect parameter client
   detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
@@ -60,7 +62,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     throw ex;
   }
 
-  aiming_point_.header.frame_id = "odom";
+  aiming_point_.header.frame_id = "odom_aim";
   aiming_point_.ns = "aiming_point";
   aiming_point_.type = visualization_msgs::msg::Marker::SPHERE;
   aiming_point_.action = visualization_msgs::msg::Marker::ADD;
@@ -118,19 +120,19 @@ void RMSerialDriver::receiveData()
         bool crc_ok =
           crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
         if (crc_ok) {
-          // if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
-          //   //setParam(rclcpp::Parameter("detect_color", packet.detect_color));
-          //   //previous_receive_color_ = packet.detect_color;
-          // }
-
-          if (packet.reset_tracker) {
-            resetTracker();
+          if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
+              setParam(rclcpp::Parameter("detect_color", packet.detect_color));
+              previous_receive_color_ = packet.detect_color;
           }
+
+          // if (packet.reset_tracker) {
+          //   resetTracker();
+          // }
 
           geometry_msgs::msg::TransformStamped t;
           timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
           t.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
-          t.header.frame_id = "odom";
+          t.header.frame_id = "odom_aim";
           t.child_frame_id = "gimbal_link";
           tf2::Quaternion q_rot;
           //double PI = 3.1415926;
@@ -143,6 +145,14 @@ void RMSerialDriver::receiveData()
           q_rot = q * q_rot;
           t.transform.rotation = tf2::toMsg(q_rot);
           tf_broadcaster_->sendTransform(t);
+
+          //publish HP and ifgamestart
+          std_msgs::msg::UInt16 HP;
+          HP.data = packet.HP;
+          sentry_health_pub_->publish(HP);
+          std_msgs::msg::Bool game_start;
+          game_start.data = packet.game_start;
+          game_start_pub_->publish(game_start);
           
         } else {
           RCLCPP_ERROR(get_logger(), "CRC error!");

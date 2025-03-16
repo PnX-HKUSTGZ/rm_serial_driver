@@ -12,6 +12,8 @@
 #include <rclcpp/subscription.hpp>
 #include <serial_driver/serial_driver.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/u_int16.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -70,7 +72,7 @@ private:
   // Aimimg point receiving from serial port for visualization
   visualization_msgs::msg::Marker aiming_point_;
 
-  // Broadcast tf from odom to gimbal_link
+  // Broadcast tf from odom_aim to gimbal_link
   double timestamp_offset_ = 0;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
@@ -81,6 +83,8 @@ private:
   // For debug usage
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr sentry_health_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr game_start_pub_;
 
   std::thread receive_thread_;
 };
