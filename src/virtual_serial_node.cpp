@@ -32,12 +32,13 @@ public:
   explicit VirtualSerialNode(const rclcpp::NodeOptions &options) : Node("serial_driver", options) {
     RCLCPP_INFO(this->get_logger(), "Start VirtualSerialNode!");
 
-
+    // Detect parameter client
+    detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
     this->declare_parameter("vision_mode", static_cast<int>(0));
-
-    has_rune_ = this->declare_parameter("has_rune", true);
+    this->declare_parameter("color", static_cast<int>(0));
+    this->declare_parameter("has_rune", true);
     this->declare_parameter("roll", 0.0);
     this->declare_parameter("pitch", 0.0);
     this->declare_parameter("yaw", 0.0);
@@ -50,6 +51,7 @@ public:
       this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector/set_mode");
     set_mode_clients_.emplace(autoaim_set_mode_client_1->get_service_name(),
                               autoaim_set_mode_client_1);
+    has_rune_ = this->get_parameter("has_rune").as_bool();
     if (has_rune_) {
       auto client1 = this->create_client<auto_aim_interfaces::srv::SetMode>("rune_detector/set_mode");
       set_mode_clients_.emplace(client1->get_service_name(), client1);
@@ -59,9 +61,15 @@ public:
 
     timer_ = this->create_wall_timer(std::chrono::milliseconds(5), [this]() {
       int mode = this->get_parameter("vision_mode").as_int();
+      int color = this->get_parameter("color").as_int();
       double roll = this->get_parameter("roll").as_double();
       double pitch = this->get_parameter("pitch").as_double();
       double yaw = this->get_parameter("yaw").as_double();
+
+      if (!initial_set_param_ || color != previous_receive_color_) {
+        setParam(rclcpp::Parameter("detect_color", color));
+        previous_receive_color_ = color;
+      }
       tf2::Quaternion q;
       q.setRPY(roll * M_PI / 180.0, -pitch * M_PI / 180.0, yaw * M_PI / 180.0);
       transform_stamped_.transform.rotation = tf2::toMsg(q);
@@ -115,10 +123,41 @@ public:
       });
   }
 
+  void setParam(const rclcpp::Parameter & param)
+  {
+    if (!detector_param_client_->service_is_ready()) {
+      RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+      return;
+    }
+    if (
+      !set_param_future_.valid() ||
+      set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      RCLCPP_INFO(get_logger(), "Setting detect_color to %ld...", param.as_int());
+      set_param_future_ = detector_param_client_->set_parameters(
+        {param}, [this, param](const ResultFuturePtr & results) {
+          for (const auto & result : results.get()) {
+            if (!result.successful) {
+              RCLCPP_ERROR(get_logger(), "Failed to set parameter: %s", result.reason.c_str());
+              return;
+            }
+          }
+          RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
+          initial_set_param_ = true;
+        });
+    }
+  }
+
 private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr timer_;
   geometry_msgs::msg::TransformStamped transform_stamped_;
+  
+  // Param client to set detect_colr
+  using ResultFuturePtr = std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>>;
+  bool initial_set_param_ = false;
+  uint8_t previous_receive_color_ = 0;
+  rclcpp::AsyncParametersClient::SharedPtr detector_param_client_;
+  ResultFuturePtr set_param_future_;
 
   bool has_rune_;
 
