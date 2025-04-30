@@ -84,7 +84,10 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr sentry_health_pub_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr game_start_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr our_base_health_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr enemy_base_health_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr our_outpost_health_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr enemy_outpost_health_pub_;
 
   std::thread receive_thread_;
 };

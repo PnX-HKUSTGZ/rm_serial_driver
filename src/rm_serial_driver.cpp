@@ -3,6 +3,7 @@
 
 #include <tf2/LinearMath/Quaternion.h>
 
+#include <iostream>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 #include <rclcpp/utilities.hpp>
@@ -42,7 +43,11 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
   marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/aiming_point", 10);
   sentry_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/ifhealth", 10);
-  game_start_pub_ = this->create_publisher<std_msgs::msg::Bool>("/ifgamestart", 10);
+  our_base_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/our_base_health", 10);
+  enemy_base_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/enemy_base_health", 10);
+  our_outpost_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/our_outpost_health", 10);
+  enemy_outpost_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/enemy_outpost_health", 10);
+
 
   // Detect parameter client
   detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
@@ -105,12 +110,14 @@ void RMSerialDriver::receiveData()
   std::vector<uint8_t> header(1);
   std::vector<uint8_t> data;
   data.reserve(sizeof(ReceivePacket));
-
+  
   while (rclcpp::ok()) {
     try {
+      
       serial_driver_->port()->receive(header);
-
+    
       if (header[0] == 0x5A) {
+        
         data.resize(sizeof(ReceivePacket) - 1);
         serial_driver_->port()->receive(data);
 
@@ -124,7 +131,7 @@ void RMSerialDriver::receiveData()
               setParam(rclcpp::Parameter("detect_color", packet.detect_color));
               previous_receive_color_ = packet.detect_color;
           }
-
+            
           // if (packet.reset_tracker) {
           //   resetTracker();
           // }
@@ -146,22 +153,46 @@ void RMSerialDriver::receiveData()
           q_rot = q * q_rot;
           t.transform.rotation = tf2::toMsg(q_rot);
           tf_broadcaster_->sendTransform(t);
+          
+          //publish game info
+          std_msgs::msg::UInt16 sentryHP;
+          
+          sentryHP.data = packet.sentryHP;
+          //std::cout<<"sentHP: " << sentryHP.data << std::endl;
+          std_msgs::msg::UInt16 our_baseHP;
+          our_baseHP.data = packet.our_baseHP;
+          //std::cout<<"our_baseHP: " << our_baseHP.data << std::endl;
+          std_msgs::msg::UInt16 enemy_baseHP;
+          enemy_baseHP.data = packet.enemy_baseHP;
+          //std::cout<<"enemy_baseHP: " << enemy_baseHP.data << std::endl;
+          std_msgs::msg::UInt16 our_outpostHP;
+          our_outpostHP.data = packet.our_outpostHP;
+          //std::cout<<"our_outpostHP: " << our_outpostHP.data << std::endl;
+          std_msgs::msg::UInt16 enemy_outpostHP;
+          enemy_outpostHP.data = packet.enemy_outpostHP;
+          //std::cout<<"enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
-          //publish HP and ifgamestart
-          std_msgs::msg::UInt16 HP;
-          HP.data = packet.HP;
-          sentry_health_pub_->publish(HP);
-          std_msgs::msg::Bool game_start;
-          game_start.data = packet.game_start;
-          game_start_pub_->publish(game_start);
+          sentryHP.data = 100;
+          our_baseHP.data = 3000;
+          our_outpostHP.data = -100;
+
+          sentry_health_pub_->publish(sentryHP);
+          our_base_health_pub_->publish(our_baseHP);
+          enemy_base_health_pub_->publish(enemy_baseHP);
+          our_outpost_health_pub_->publish(our_outpostHP);
+          enemy_outpost_health_pub_->publish(enemy_outpostHP);
+          
+          
           
         } else {
           RCLCPP_ERROR(get_logger(), "CRC error!");
         }
       } else {
+        std::cout<<"invalid header"<<std::endl;
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 20, "Invalid header: %02X", header[0]);
       }
     } catch (const std::exception & ex) {
+      std::cout << "Error while receiving data: " << ex.what() << std::endl;
       RCLCPP_ERROR_THROTTLE(
         get_logger(), *get_clock(), 20, "Error while receiving data: %s", ex.what());
       reopenPort();
