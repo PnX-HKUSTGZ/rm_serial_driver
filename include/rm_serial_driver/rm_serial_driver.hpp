@@ -69,7 +69,8 @@ private:
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_tracker_client_;
 
   // Service client to set mode
-  rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedPtr set_rune_mode_client_, set_car_mode_client_; 
+  rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedPtr set_rune_detector_mode_client_, set_rune_solver_mode_client_, 
+                                                               set_car_detector_mode_client_, set_car_tracker_mode_client_;
 
   // Aimimg point receiving from serial port for visualization
   visualization_msgs::msg::Marker aiming_point_;

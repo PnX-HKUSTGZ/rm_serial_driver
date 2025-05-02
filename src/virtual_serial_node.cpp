@@ -49,8 +49,12 @@ public:
     // Param client
     auto autoaim_set_mode_client_1 =
       this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector/set_mode");
+    auto autoaim_set_mode_client_2 =
+      this->create_client<auto_aim_interfaces::srv::SetMode>("armor_tracker/set_mode");
     set_mode_clients_.emplace(autoaim_set_mode_client_1->get_service_name(),
                               autoaim_set_mode_client_1);
+    set_mode_clients_.emplace(autoaim_set_mode_client_2->get_service_name(),
+                              autoaim_set_mode_client_2);
     has_rune_ = this->get_parameter("has_rune").as_bool();
     if (has_rune_) {
       auto client1 = this->create_client<auto_aim_interfaces::srv::SetMode>("rune_detector/set_mode");
