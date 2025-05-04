@@ -177,7 +177,7 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
 
     packet.tracking = msg->tracking;
     packet.id = id_unit8_map.at(msg->id);
-    packet.pitch = -msg->pitch;
+    packet.pitch = msg->pitch;
     packet.yaw = msg->yaw;
     packet.iffire = msg->iffire;
 
