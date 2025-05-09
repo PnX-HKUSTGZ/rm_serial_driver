@@ -139,9 +139,7 @@ void RMSerialDriver::receiveData()
             previous_receive_color_ = packet.detect_color;
           }
 
-          if (packet.reset_tracker) {
-            resetTracker();
-          }
+          
 
           mode_ = 9;
 
@@ -181,9 +179,7 @@ void RMSerialDriver::receiveData()
           enemy_outpostHP.data = packet.enemy_outpostHP;
           //std::cout<<"enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
-          sentryHP.data = 100;
-          our_baseHP.data = 3000;
-          our_outpostHP.data = -100;
+          std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " enemy_baseHP: " << enemy_baseHP.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
           sentry_health_pub_->publish(sentryHP);
           our_base_health_pub_->publish(our_baseHP);
