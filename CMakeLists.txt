@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 ## enforcing cleaner code.
 add_definitions(-Wall -Werror)
 
+## Add optimization flags
+add_compile_options(-O2)
+
 ## Export compile commands for clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -23,14 +26,18 @@ ament_auto_find_build_dependencies()
 ## Build ##
 ###########
 
-ament_auto_add_library(${PROJECT_NAME} SHARED
-  src/rm_serial_driver.cpp
-  src/crc.cpp
+ament_auto_add_library(${PROJECT_NAME} SHARED DIRECTORY
+  src
 )
 
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN rm_serial_driver::RMSerialDriver
   EXECUTABLE ${PROJECT_NAME}_node
+)
+
+rclcpp_components_register_node(${PROJECT_NAME}
+  PLUGIN rm_serial_driver::VirtualSerialNode
+  EXECUTABLE virtual_serial_node
 )
 
 #############

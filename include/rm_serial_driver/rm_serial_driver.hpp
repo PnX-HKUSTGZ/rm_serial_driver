@@ -26,6 +26,7 @@
 
 #include "auto_aim_interfaces/msg/target.hpp"
 #include <auto_aim_interfaces/msg/firecontrol.hpp>
+#include <auto_aim_interfaces/srv/set_mode.hpp>
 
 
 namespace rm_serial_driver
@@ -52,6 +53,9 @@ private:
 
   void resetTracker();
 
+  bool setRuneMode(uint8_t mode); 
+  bool setCarMode(uint8_t mode); 
+
   // Serial port
   std::unique_ptr<IoContext> owned_ctx_;
   std::string device_name_;
@@ -68,6 +72,10 @@ private:
 
   // Service client to reset tracker
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_tracker_client_;
+
+  // Service client to set mode
+  rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedPtr set_rune_detector_mode_client_, set_rune_solver_mode_client_, 
+                                                               set_car_detector_mode_client_, set_car_tracker_mode_client_;
 
   // Aimimg point receiving from serial port for visualization
   visualization_msgs::msg::Marker aiming_point_;
@@ -90,6 +98,9 @@ private:
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr enemy_outpost_health_pub_;
 
   std::thread receive_thread_;
+
+  // mode
+  uint8_t mode_ = -1;
 };
 }  // namespace rm_serial_driver
 

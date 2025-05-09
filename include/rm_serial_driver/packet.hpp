@@ -14,8 +14,9 @@ struct ReceivePacket
 {
   uint8_t header = 0x5A;
   uint8_t detect_color : 1;  // 0-red 1-blue
+  //uint8_t set_mode : 4; // 0-outpost 6-guard 7-base 8-rune 9-auto
   uint8_t game_start : 1;
-  uint8_t reserved : 6;
+  uint8_t reserved : 2;
   uint16_t sentryHP;
   uint16_t our_baseHP;
   uint16_t enemy_baseHP;
@@ -30,8 +31,8 @@ struct SendAimPacket
   uint8_t header = 0xA5;
   uint8_t tracking : 1;
   uint8_t iffire : 1;
-  uint8_t id : 3;          // 0-outpost 6-guard 7-base
-  uint8_t reserved : 3;
+  uint8_t id : 4;          // 0-outpost 6-guard 7-base  8-rune
+  uint8_t reserved : 2;
   
   float pitch;
   float yaw;
