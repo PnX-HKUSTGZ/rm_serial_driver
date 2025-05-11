@@ -25,6 +25,7 @@
 #include <auto_aim_interfaces/srv/set_mode.hpp>
 
 
+
 namespace rm_serial_driver
 {
 RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
@@ -61,6 +62,16 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   set_rune_solver_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
   set_car_detector_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector/set_mode");
   set_car_tracker_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_tracker/set_mode");
+
+  // set decision service server
+  set_decision_service_server_ =
+    this->create_service<std_srvs::srv::SetBool>(
+      "/set_bool",
+      [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+             std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+      {
+        this->setDecisionCallback(request, response);
+      });
 
   try {
     serial_driver_->init_port(device_name_, *device_config_);
@@ -260,12 +271,35 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 
     std::lock_guard<std::mutex> lock(mutex_);
     serial_driver_->port()->send(data);
-    std::cout<<packet.linear_x<<" "<<packet.linear_y<<" "<<packet.linear_z<<" "<<packet.angular_x<<" "<<packet.angular_y<<" "<<packet.angular_z<<std::endl;
+    //std::cout<<packet.linear_x<<" "<<packet.linear_y<<" "<<packet.linear_z<<" "<<packet.angular_x<<" "<<packet.angular_y<<" "<<packet.angular_z<<std::endl;
   } catch (const std::exception & ex) {
     RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
     reopenPort();
   }
 }
+
+void RMSerialDriver::setDecisionCallback(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+{
+  try {
+    SendDecisionPacket packet;
+    packet.ifreload = request->data;
+
+    crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+
+    std::vector<uint8_t> data = toVector(packet);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    serial_driver_->port()->send(data);
+    response->success = true;
+    
+  } catch (const std::exception & ex) {
+    RCLCPP_ERROR(get_logger(), "Error while sending decision data: %s", ex.what());
+    response->success = false;
+    reopenPort();
+  }
+} 
 
 void RMSerialDriver::getParams()
 {

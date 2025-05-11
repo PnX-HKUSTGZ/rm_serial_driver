@@ -27,6 +27,7 @@
 #include "auto_aim_interfaces/msg/target.hpp"
 #include <auto_aim_interfaces/msg/firecontrol.hpp>
 #include <auto_aim_interfaces/srv/set_mode.hpp>
+#include "std_srvs/srv/set_bool.hpp"
 
 
 namespace rm_serial_driver
@@ -46,6 +47,10 @@ private:
   void aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg);
 
   void navCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+
+  void setDecisionCallback(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
   void reopenPort();
 
@@ -76,6 +81,9 @@ private:
   // Service client to set mode
   rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedPtr set_rune_detector_mode_client_, set_rune_solver_mode_client_, 
                                                                set_car_detector_mode_client_, set_car_tracker_mode_client_;
+
+  // Service server to deal with decision
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_decision_service_server_;
 
   // Aimimg point receiving from serial port for visualization
   visualization_msgs::msg::Marker aiming_point_;

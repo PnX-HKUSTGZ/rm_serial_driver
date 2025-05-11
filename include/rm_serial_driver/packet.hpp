@@ -57,6 +57,17 @@ struct SendNavPacket
   uint16_t checksum = 0;  // Checksum for error detection
 } __attribute__((packed));
 
+
+struct SendDecisionPacket
+{
+  uint8_t header = 0xA7;  // Packet header, fixed value 0xA5
+
+  // Decision values
+  uint8_t ifreload;
+
+  uint16_t checksum = 0;  // Checksum for error detection
+} __attribute__((packed));
+
 inline ReceivePacket fromVector(const std::vector<uint8_t> & data)
 {
   ReceivePacket packet;
