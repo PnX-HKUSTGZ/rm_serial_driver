@@ -72,9 +72,9 @@ public:
       double pitch = this->get_parameter("pitch").as_double();
       double yaw = this->get_parameter("yaw").as_double();
 
-      if (!initial_set_param_ || color != previous_receive_color_) {
-        setParam(rclcpp::Parameter("detect_color", color));
-        setRuneParam(rclcpp::Parameter("rune_detector", !color));
+      if (!initial_set_param_ || !initial_set_rune_param_ || color != previous_receive_color_) {
+        setParam(rclcpp::Parameter("detect_color", int(color)));
+        setRuneParam(rclcpp::Parameter("detect_color", int(!color)));
         previous_receive_color_ = color;
       }
       tf2::Quaternion q;
@@ -162,10 +162,10 @@ public:
     }
 
     if (
-      !set_param_future_.valid() ||
-      set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      !set_rune_param_future_.valid() ||
+      set_rune_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
       RCLCPP_INFO(get_logger(), "Setting rune_detect_color to %ld...", param.as_int());
-      set_param_future_ = rune_detector_param_client_->set_parameters(
+      set_rune_param_future_ = rune_detector_param_client_->set_parameters(
         {param}, [this, param](const ResultFuturePtr & results) {
           for (const auto & result : results.get()) {
             if (!result.successful) {
@@ -174,7 +174,7 @@ public:
             }
           }
           RCLCPP_INFO(get_logger(), "Successfully set rune_detect_color to %ld!", param.as_int());
-          initial_set_param_ = true;
+          initial_set_rune_param_ = true;
         });
     }
   }
@@ -187,6 +187,7 @@ private:
   // Param client to set detect_colr
   using ResultFuturePtr = std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>>;
   bool initial_set_param_ = false;
+  bool initial_set_rune_param_ = false;
   uint8_t previous_receive_color_ = 0;
   rclcpp::AsyncParametersClient::SharedPtr detector_param_client_;
   ResultFuturePtr set_param_future_;

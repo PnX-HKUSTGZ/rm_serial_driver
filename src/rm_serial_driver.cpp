@@ -122,10 +122,10 @@ void RMSerialDriver::receiveData()
         bool crc_ok =
           crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
         if (crc_ok) {
-          if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
+          if (!initial_set_param_ || !initial_set_rune_param_ || packet.detect_color != previous_receive_color_) {
             bool detect_color_set = packet.detect_color;
             setParam(rclcpp::Parameter("detect_color", uint8_t(detect_color_set)));
-            setRuneParam(rclcpp::Parameter("rune_detector", uint8_t(!detect_color_set)));
+            setRuneParam(rclcpp::Parameter("detect_color", uint8_t(!detect_color_set)));
             previous_receive_color_ = packet.detect_color;
           }
 
@@ -333,10 +333,10 @@ void RMSerialDriver::setRuneParam(const rclcpp::Parameter & param)
   }
 
   if (
-    !set_param_future_.valid() ||
-    set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    !set_rune_param_future_.valid() ||
+    set_rune_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     RCLCPP_INFO(get_logger(), "Setting rune_detect_color to %ld...", param.as_int());
-    set_param_future_ = rune_detector_param_client_->set_parameters(
+    set_rune_param_future_ = rune_detector_param_client_->set_parameters(
       {param}, [this, param](const ResultFuturePtr & results) {
         for (const auto & result : results.get()) {
           if (!result.successful) {
@@ -345,7 +345,7 @@ void RMSerialDriver::setRuneParam(const rclcpp::Parameter & param)
           }
         }
         RCLCPP_INFO(get_logger(), "Successfully set rune_detect_color to %ld!", param.as_int());
-        initial_set_param_ = true;
+        initial_set_rune_param_ = true;
       });
   }
 }
