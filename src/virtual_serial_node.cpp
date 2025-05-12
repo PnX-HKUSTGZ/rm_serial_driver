@@ -34,6 +34,8 @@ public:
 
     // Detect parameter client
     detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
+    rune_detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
+
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
     this->declare_parameter("vision_mode", static_cast<int>(0));
@@ -72,6 +74,7 @@ public:
 
       if (!initial_set_param_ || color != previous_receive_color_) {
         setParam(rclcpp::Parameter("detect_color", color));
+        setRuneParam(rclcpp::Parameter("rune_detector", !color));
         previous_receive_color_ = color;
       }
       tf2::Quaternion q;
@@ -151,6 +154,31 @@ public:
     }
   }
 
+  void setRuneParam(const rclcpp::Parameter & param)
+  {
+    if (!rune_detector_param_client_->service_is_ready()) {
+      RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+      return;
+    }
+
+    if (
+      !set_param_future_.valid() ||
+      set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      RCLCPP_INFO(get_logger(), "Setting rune_detect_color to %ld...", param.as_int());
+      set_param_future_ = rune_detector_param_client_->set_parameters(
+        {param}, [this, param](const ResultFuturePtr & results) {
+          for (const auto & result : results.get()) {
+            if (!result.successful) {
+              RCLCPP_ERROR(get_logger(), "Failed to set parameter: %s", result.reason.c_str());
+              return;
+            }
+          }
+          RCLCPP_INFO(get_logger(), "Successfully set rune_detect_color to %ld!", param.as_int());
+          initial_set_param_ = true;
+        });
+    }
+  }
+
 private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::TimerBase::SharedPtr timer_;
@@ -162,6 +190,8 @@ private:
   uint8_t previous_receive_color_ = 0;
   rclcpp::AsyncParametersClient::SharedPtr detector_param_client_;
   ResultFuturePtr set_param_future_;
+  rclcpp::AsyncParametersClient::SharedPtr rune_detector_param_client_;
+  ResultFuturePtr set_rune_param_future_;
 
   bool has_rune_;
 

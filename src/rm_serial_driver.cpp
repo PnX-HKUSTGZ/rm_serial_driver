@@ -46,6 +46,8 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
   // Detect parameter client
   detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
+  rune_detector_param_client_ =
+    std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
 
   // Tracker reset service client
   reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
@@ -121,7 +123,9 @@ void RMSerialDriver::receiveData()
           crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
         if (crc_ok) {
           if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
-            setParam(rclcpp::Parameter("detect_color", packet.detect_color));
+            bool detect_color_set = packet.detect_color;
+            setParam(rclcpp::Parameter("detect_color", uint8_t(detect_color_set)));
+            setRuneParam(rclcpp::Parameter("rune_detector", uint8_t(!detect_color_set)));
             previous_receive_color_ = packet.detect_color;
           }
 
@@ -316,6 +320,31 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
           }
         }
         RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
+        initial_set_param_ = true;
+      });
+  }
+}
+
+void RMSerialDriver::setRuneParam(const rclcpp::Parameter & param)
+{
+  if (!rune_detector_param_client_->service_is_ready()) {
+    RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+    return;
+  }
+
+  if (
+    !set_param_future_.valid() ||
+    set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    RCLCPP_INFO(get_logger(), "Setting rune_detect_color to %ld...", param.as_int());
+    set_param_future_ = rune_detector_param_client_->set_parameters(
+      {param}, [this, param](const ResultFuturePtr & results) {
+        for (const auto & result : results.get()) {
+          if (!result.successful) {
+            RCLCPP_ERROR(get_logger(), "Failed to set parameter: %s", result.reason.c_str());
+            return;
+          }
+        }
+        RCLCPP_INFO(get_logger(), "Successfully set rune_detect_color to %ld!", param.as_int());
         initial_set_param_ = true;
       });
   }

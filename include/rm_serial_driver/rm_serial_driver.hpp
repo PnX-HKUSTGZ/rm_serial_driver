@@ -7,6 +7,7 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <rclcpp/parameter_client.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
@@ -46,6 +47,7 @@ private:
   void reopenPort();
 
   void setParam(const rclcpp::Parameter & param);
+  void setRuneParam(const rclcpp::Parameter & param);
 
   void resetTracker();
 
@@ -64,6 +66,8 @@ private:
   uint8_t previous_receive_color_ = 0;
   rclcpp::AsyncParametersClient::SharedPtr detector_param_client_;
   ResultFuturePtr set_param_future_;
+  rclcpp::AsyncParametersClient::SharedPtr rune_detector_param_client_;
+  ResultFuturePtr set_rune_param_future_;
 
   // Service client to reset tracker
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_tracker_client_;
