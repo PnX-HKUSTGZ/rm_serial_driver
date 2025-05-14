@@ -184,6 +184,8 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
     packet.pitch = msg->pitch;
     packet.yaw = msg->yaw;
     packet.iffire = msg->iffire;
+    packet.x = msg->projected_x; 
+    packet.y = msg->projected_y; 
 
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 

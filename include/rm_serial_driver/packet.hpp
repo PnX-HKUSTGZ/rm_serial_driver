@@ -31,6 +31,8 @@ struct SendPacket
   
   float pitch;
   float yaw;
+  float x;
+  float y; 
   
   uint16_t checksum = 0;
 } __attribute__((packed));
