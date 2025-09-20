@@ -39,7 +39,9 @@ public:
 
         // Detect parameter client
         detector_param_client_ =
-            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
+        detector_param_client_wide_ =
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_wide");
         rune_detector_param_client_ =
             std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
 
@@ -57,13 +59,17 @@ public:
 
         // Param client
         auto autoaim_set_mode_client_1 =
-            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector/set_mode");
+            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_main/set_mode");
         auto autoaim_set_mode_client_2 =
             this->create_client<auto_aim_interfaces::srv::SetMode>("armor_tracker/set_mode");
+        auto autoaim_set_mode_client_3 =
+            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_wide/set_mode");
         set_mode_clients_.emplace(
             autoaim_set_mode_client_1->get_service_name(), autoaim_set_mode_client_1);
         set_mode_clients_.emplace(
             autoaim_set_mode_client_2->get_service_name(), autoaim_set_mode_client_2);
+        set_mode_clients_.emplace(
+            autoaim_set_mode_client_3->get_service_name(), autoaim_set_mode_client_3);
         has_rune_ = this->get_parameter("has_rune").as_bool();
         if (has_rune_) {
             auto client1 =
@@ -211,6 +217,8 @@ private:
     ResultFuturePtr set_param_future_;
     rclcpp::AsyncParametersClient::SharedPtr rune_detector_param_client_;
     ResultFuturePtr set_rune_param_future_;
+    rclcpp::AsyncParametersClient::SharedPtr detector_param_client_wide_;
+    ResultFuturePtr set_param_future_wide_;
 
     bool has_rune_;
 

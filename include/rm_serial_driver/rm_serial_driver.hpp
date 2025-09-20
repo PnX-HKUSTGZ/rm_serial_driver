@@ -69,13 +69,16 @@ private:
     ResultFuturePtr set_param_future_;
     rclcpp::AsyncParametersClient::SharedPtr rune_detector_param_client_;
     ResultFuturePtr set_rune_param_future_;
+    rclcpp::AsyncParametersClient::SharedPtr detector_param_client_wide_;
+    ResultFuturePtr set_param_future_wide_;
 
     // Service client to reset tracker
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_tracker_client_;
 
     // Service client to set mode
     rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedPtr set_rune_detector_mode_client_,
-        set_rune_solver_mode_client_, set_car_detector_mode_client_, set_car_tracker_mode_client_;
+        set_rune_solver_mode_client_, set_car_detector_mode_client_, set_car_tracker_mode_client_,
+        set_car_detector_mode_client_wide_;
 
     // Aimimg point receiving from serial port for visualization
     visualization_msgs::msg::Marker aiming_point_;
