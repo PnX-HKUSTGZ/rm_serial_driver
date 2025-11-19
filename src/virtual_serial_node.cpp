@@ -34,9 +34,11 @@ class VirtualSerialNode : public rclcpp::Node
 
 public:
     explicit VirtualSerialNode(const rclcpp::NodeOptions & options) : Node("serial_driver", options)
-    {
-        RCLCPP_INFO(this->get_logger(), "Start VirtualSerialNode!");
+    {   try {
+        // 节点初始化代码
 
+        RCLCPP_INFO(this->get_logger(), "Start VirtualSerialNode!");
+        
         // Detect parameter client
         detector_param_client_ =
             std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
@@ -50,26 +52,29 @@ public:
         this->declare_parameter("vision_mode", static_cast<int>(0));
         this->declare_parameter("color", static_cast<int>(0));
         this->declare_parameter("has_rune", true);
+        this->declare_parameter("wide_cam", false); 
         this->declare_parameter("roll", 0.0);
         this->declare_parameter("pitch", 0.0);
         this->declare_parameter("yaw", 0.0);
 
         transform_stamped_.header.frame_id = "odom";
         transform_stamped_.child_frame_id = "gimbal_link";
-
         // Param client
+        has_wide_cam_ = this->get_parameter("wide_cam").as_bool();
         auto autoaim_set_mode_client_1 =
             this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_main/set_mode");
         auto autoaim_set_mode_client_2 =
             this->create_client<auto_aim_interfaces::srv::SetMode>("armor_tracker/set_mode");
-        auto autoaim_set_mode_client_3 =
-            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_wide/set_mode");
         set_mode_clients_.emplace(
             autoaim_set_mode_client_1->get_service_name(), autoaim_set_mode_client_1);
         set_mode_clients_.emplace(
             autoaim_set_mode_client_2->get_service_name(), autoaim_set_mode_client_2);
-        set_mode_clients_.emplace(
+        if(has_wide_cam_){
+            auto autoaim_set_mode_client_3 =
+            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_wide/set_mode");
+            set_mode_clients_.emplace(
             autoaim_set_mode_client_3->get_service_name(), autoaim_set_mode_client_3);
+        }
         has_rune_ = this->get_parameter("has_rune").as_bool();
         if (has_rune_) {
             auto client1 =
@@ -115,6 +120,12 @@ public:
                 }
             }
         });
+        }catch (const std::exception& e) {
+            RCLCPP_FATAL(this->get_logger(), "Initialization failed: %s", e.what());
+            throw;
+        }
+
+
     }
 
     void setMode(SetModeClient & client, const uint8_t mode)
@@ -221,6 +232,7 @@ private:
     ResultFuturePtr set_param_future_wide_;
 
     bool has_rune_;
+    bool has_wide_cam_;
 
     std::unordered_map<std::string, SetModeClient> set_mode_clients_;
     inline Eigen::Vector3d getRPY(const Eigen::Matrix3d & rotation_matrix)
