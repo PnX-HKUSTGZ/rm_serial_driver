@@ -166,6 +166,9 @@ void RMSerialDriver::receiveData()
                     t.transform.rotation = tf2::toMsg(q_rot);
                     tf_broadcaster_->sendTransform(t);
 
+                    current_yaw_vel = packet.yaw_vel;
+                    current_pitch_vel = packet.pitch_vel;
+                    
                 } else {
                     RCLCPP_ERROR(get_logger(), "CRC error!");
                 }
@@ -197,6 +200,13 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
         packet.iffire = msg->iffire;
         packet.x = msg->projected_x;
         packet.y = msg->projected_y;
+        packet.yaw_vel = msg->yaw_vel;
+        packet.yaw_acc = msg->yaw_acc;
+        packet.pitch_vel = msg->pitch_vel;
+        packet.pitch_acc = msg->pitch_acc;
+        std::cout << "pitch: " << packet.pitch << std::endl;
+        std::cout << "yaw_vel: " << packet.yaw_vel << std::endl;
+        std::cout << "yaw_acc: " << packet.yaw_acc << std::endl;
 
         crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 

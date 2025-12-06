@@ -97,6 +97,8 @@ private:
 
     // mode
     uint8_t mode_ = -1;
+    float current_yaw_vel = 0.0;
+    float current_pitch_vel = 0.0;
 };
 }  // namespace rm_serial_driver
 
