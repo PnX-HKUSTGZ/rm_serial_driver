@@ -42,6 +42,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     // Create Publisher
     latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
     marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/aiming_point", 10);
+    gimbal_vel_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/gimbal_vel", 10);
 
     // Detect parameter client
     detector_param_client_ =
@@ -162,8 +163,13 @@ void RMSerialDriver::receiveData()
                     t.transform.rotation = tf2::toMsg(q_rot);
                     tf_broadcaster_->sendTransform(t);
 
-                    current_yaw_vel = packet.yaw_vel;
-                    current_pitch_vel = packet.pitch_vel;
+                    // current_yaw_vel = packet.yaw_vel;
+                    // current_pitch_vel = packet.pitch_vel;
+                    
+                    std_msgs::msg::Float32MultiArray vel_msg;
+                    vel_msg.data = {packet.yaw_vel, packet.pitch_vel};
+                    gimbal_vel_pub_->publish(vel_msg);
+                    // std::cerr << "SUCCESSFULLY RECEIVED DATA!\n";
                     
                 } else {
                     RCLCPP_ERROR(get_logger(), "CRC error!");
@@ -186,6 +192,7 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
         {"", 0},  {"outpost", 0}, {"1", 1},     {"1", 1},    {"2", 2},   {"3", 3},
         {"4", 4}, {"5", 5},       {"guard", 6}, {"base", 7}, {"rune", 8}};
 
+    // std::cerr << "START SENDING DATA!\n";
     try {
         SendPacket packet;
 
@@ -200,9 +207,10 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
         packet.yaw_acc = msg->yaw_acc;
         packet.pitch_vel = msg->pitch_vel;
         packet.pitch_acc = msg->pitch_acc;
-        std::cout << "pitch: " << packet.pitch << std::endl;
-        std::cout << "yaw_vel: " << packet.yaw_vel << std::endl;
-        std::cout << "yaw_acc: " << packet.yaw_acc << std::endl;
+        // std::cout << "pitch: " << packet.pitch << std::endl;
+        // std::cout << "yaw: " << packet.yaw << std::endl;
+        // std::cout << "yaw_vel: " << packet.yaw_vel << std::endl;
+        // std::cout << "yaw_acc: " << packet.yaw_acc << std::endl;
 
         crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 

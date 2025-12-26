@@ -18,9 +18,9 @@ struct ReceivePacket
     uint8_t set_mode : 4;  // 0-outpost 6-guard 7-base 8-rune
     uint8_t reserved : 2;
     float q[4];  // x y z w
-    uint16_t checksum = 0;
     float yaw_vel;
     float pitch_vel;
+    uint16_t checksum = 0;
 } __attribute__((packed));
 
 struct SendPacket
