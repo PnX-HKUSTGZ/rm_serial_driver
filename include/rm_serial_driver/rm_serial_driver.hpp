@@ -13,6 +13,7 @@
 #include <rclcpp/subscription.hpp>
 #include <serial_driver/serial_driver.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -89,6 +90,7 @@ private:
     // For debug usage
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr marker_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr gimbal_vel_pub_;
 
     std::thread receive_thread_;
 
