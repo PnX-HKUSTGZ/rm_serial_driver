@@ -120,6 +120,8 @@ void RMSerialDriver::receiveData()
         try {
             serial_driver_->port()->receive(header);
 
+            
+
             if (header[0] == 0x5A) {
                 data.resize(sizeof(ReceivePacket) - 1);
                 serial_driver_->port()->receive(data);
@@ -204,9 +206,13 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
         packet.yaw_acc = msg->yaw_acc;
         packet.pitch_vel = msg->pitch_vel;
         packet.pitch_acc = msg->pitch_acc;
-        std::cout << "pitch: " << packet.pitch << std::endl;
-        std::cout << "yaw_vel: " << packet.yaw_vel << std::endl;
-        std::cout << "yaw_acc: " << packet.yaw_acc << std::endl;
+        // std::cout << "Sending Data:" << std::endl;
+        // std::cout << "tracking: " << static_cast<int>(packet.tracking) << std::endl;
+        // std::cout << "id: " << static_cast<int>(packet.id) << std::endl;
+        // std::cout << "pitch: " << packet.pitch << std::endl;
+        // std::cout << "yaw: " << packet.yaw << std::endl;
+        // std::cout << "yaw_vel: " << packet.yaw_vel << std::endl;
+        // std::cout << "yaw_acc: " << packet.yaw_acc << std::endl;
 
         crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 

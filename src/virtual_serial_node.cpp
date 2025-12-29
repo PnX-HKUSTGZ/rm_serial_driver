@@ -165,7 +165,7 @@ public:
     void setParam(const rclcpp::Parameter & param)
     {
         if (!detector_param_client_->service_is_ready()) {
-            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+            RCLCPP_WARN(get_logger(), "Main Detector Service not ready, skipping parameter set");
             return;
         }
         if (!set_param_future_.valid() ||
@@ -185,12 +185,35 @@ public:
                     initial_set_param_ = true;
                 });
         }
+        if (has_wide_cam_) {
+            if (!detector_param_client_wide_->service_is_ready()) {
+                RCLCPP_WARN(get_logger(), "Wide detector service not ready, skipping parameter set");
+                return;
+            }
+
+            if (!set_param_future_wide_.valid() ||
+                set_param_future_wide_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                RCLCPP_INFO(get_logger(), "Setting wide detect_color to %ld...", param.as_int());
+                set_param_future_wide_ = detector_param_client_wide_->set_parameters(
+                    {param}, [this, param](const ResultFuturePtr & results) {
+                        for (const auto & result : results.get()) {
+                            if (!result.successful) {
+                                RCLCPP_ERROR(
+                                    get_logger(), "Failed to set wide parameter: %s", result.reason.c_str());
+                                return;
+                            }
+                        }
+                        RCLCPP_INFO(
+                            get_logger(), "Successfully set wide detect_color to %ld!", param.as_int());
+                    });
+            }
+        }
     }
 
     void setRuneParam(const rclcpp::Parameter & param)
     {
         if (!rune_detector_param_client_->service_is_ready()) {
-            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+            RCLCPP_WARN(get_logger(), "Rune Detector Service not ready, skipping parameter set");
             return;
         }
 
