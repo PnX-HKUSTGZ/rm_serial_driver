@@ -35,6 +35,8 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
     getParams();
 
+    has_wide_cam_ = this->declare_parameter("wide_cam", false);
+
     // TF broadcaster
     timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -48,8 +50,10 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
         std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
     rune_detector_param_client_ =
         std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
-    detector_param_client_wide_ =
-        std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_wide");
+    if(has_wide_cam_){
+        detector_param_client_wide_ =
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_wide");
+    }
 
     // Tracker reset service client
     reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
@@ -61,8 +65,10 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
         this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
     set_car_detector_mode_client_ =
         this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector_main/set_mode");
-    set_car_detector_mode_client_wide_ =
-        this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector_wide/set_mode");
+    if(has_wide_cam_){
+        set_car_detector_mode_client_wide_ =
+            this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector_wide/set_mode");
+    }
     set_car_tracker_mode_client_ =
         this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_tracker/set_mode");
 
@@ -353,19 +359,21 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
             });
     }
 
-    if (!detector_param_client_wide_->service_is_ready()) {
-        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set (wide)");
-    } else {
-        set_param_future_wide_ = detector_param_client_wide_->set_parameters(
-            {param}, [this, param](const ResultFuturePtr & results) {
-                for (const auto & result : results.get()) {
-                    if (!result.successful) {
-                        RCLCPP_ERROR(get_logger(), "Failed to set wide parameter: %s", result.reason.c_str());
-                        return;
+    if (has_wide_cam_) {
+        if (!detector_param_client_wide_->service_is_ready()) {
+            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set (wide)");
+        } else {
+            set_param_future_wide_ = detector_param_client_wide_->set_parameters(
+                {param}, [this, param](const ResultFuturePtr & results) {
+                    for (const auto & result : results.get()) {
+                        if (!result.successful) {
+                            RCLCPP_ERROR(get_logger(), "Failed to set wide parameter: %s", result.reason.c_str());
+                            return;
+                        }
                     }
-                }
-                RCLCPP_INFO(get_logger(), "Successfully set wide detect_color to %ld!", param.as_int());
-            });
+                    RCLCPP_INFO(get_logger(), "Successfully set wide detect_color to %ld!", param.as_int());
+                });
+        }
     }
 }
 
@@ -442,7 +450,7 @@ bool RMSerialDriver::setCarMode(uint8_t mode)
 {
     if (!set_car_tracker_mode_client_->service_is_ready() ||
         !set_car_detector_mode_client_->service_is_ready()||
-        !set_car_detector_mode_client_wide_->service_is_ready()) {
+        (has_wide_cam_ && !set_car_detector_mode_client_wide_->service_is_ready())) {
         RCLCPP_WARN(get_logger(), "Service not ready, skipping set car mode");
         return 0;
     }
@@ -452,13 +460,26 @@ bool RMSerialDriver::setCarMode(uint8_t mode)
 
     auto result_tracker_future = set_car_tracker_mode_client_->async_send_request(request);
     auto result_detector_future = set_car_detector_mode_client_->async_send_request(request);
-    auto result_detector_future_wide = set_car_detector_mode_client_wide_->async_send_request(request);
+    
+    rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedFuture result_detector_future_wide;
+    if(has_wide_cam_){
+        result_detector_future_wide = set_car_detector_mode_client_wide_->async_send_request(request).future.share();
+    }
 
     try {
         auto result1 = result_tracker_future.get();
         auto result2 = result_detector_future.get();
-        auto result3 = result_detector_future_wide.get();
-        if (result1->success && result2->success && result3->success) {
+        
+        bool result3_success = true;
+        std::string result3_message = "";
+        
+        if(has_wide_cam_){
+            auto result3 = result_detector_future_wide.get();
+            result3_success = result3->success;
+            result3_message = result3->message;
+        }
+
+        if (result1->success && result2->success && result3_success) {
             RCLCPP_INFO(get_logger(), "Successfully set car mode to %d", mode);
             return true;
         } else {

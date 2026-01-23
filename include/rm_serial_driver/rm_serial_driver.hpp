@@ -97,6 +97,7 @@ private:
 
     // mode
     uint8_t mode_ = -1;
+    bool has_wide_cam_ = false;
     float current_yaw_vel = 0.0;
     float current_pitch_vel = 0.0;
 };

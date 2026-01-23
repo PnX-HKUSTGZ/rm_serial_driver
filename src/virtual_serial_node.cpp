@@ -39,14 +39,6 @@ public:
 
         RCLCPP_INFO(this->get_logger(), "Start VirtualSerialNode!");
         
-        // Detect parameter client
-        detector_param_client_ =
-            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
-        detector_param_client_wide_ =
-            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_wide");
-        rune_detector_param_client_ =
-            std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
-
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
         this->declare_parameter("vision_mode", static_cast<int>(0));
@@ -56,11 +48,24 @@ public:
         this->declare_parameter("roll", 0.0);
         this->declare_parameter("pitch", 0.0);
         this->declare_parameter("yaw", 0.0);
+        
+        // Param client
+        has_wide_cam_ = this->get_parameter("wide_cam").as_bool();
+
+        // Detect parameter client
+        detector_param_client_ =
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
+        if(has_wide_cam_) {
+            detector_param_client_wide_ =
+                std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_wide");
+        }
+        rune_detector_param_client_ =
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
+
 
         transform_stamped_.header.frame_id = "odom";
         transform_stamped_.child_frame_id = "gimbal_link";
-        // Param client
-        has_wide_cam_ = this->get_parameter("wide_cam").as_bool();
+
         auto autoaim_set_mode_client_1 =
             this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_main/set_mode");
         auto autoaim_set_mode_client_2 =
