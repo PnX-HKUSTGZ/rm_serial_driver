@@ -22,7 +22,10 @@ struct ReceivePacket
   uint16_t enemy_baseHP;
   uint16_t our_outpostHP;
   uint16_t enemy_outpostHP;
-  float q[4]; // x y z w
+  float yaw_imu_q[4];  // x y z w for odom_omni IMU
+  float aim_imu_q[4];  // x y z w for odom_aim IMU
+  float motor_yaw;     // big yaw motor feedback (rad)
+  float motor_pitch;   // pitch motor feedback (rad)
   uint16_t checksum = 0;
 } __attribute__((packed));
 

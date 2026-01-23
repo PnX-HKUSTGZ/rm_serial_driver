@@ -4,9 +4,12 @@
 #ifndef RM_SERIAL_DRIVER__RM_SERIAL_DRIVER_HPP_
 #define RM_SERIAL_DRIVER__RM_SERIAL_DRIVER_HPP_
 
+#include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_broadcaster.h>
+#include <tf2_ros/transform_listener.h>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
@@ -23,6 +26,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <mutex>
+#include <tf2/LinearMath/Quaternion.h>
 
 #include "auto_aim_interfaces/msg/target.hpp"
 #include <auto_aim_interfaces/msg/firecontrol.hpp>
@@ -48,6 +53,8 @@ private:
 
   void navCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
 
+  void updateOdomTransforms();
+
   void setDecisionCallback(
     const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
     std::shared_ptr<std_srvs::srv::SetBool::Response> response);
@@ -60,6 +67,8 @@ private:
 
   bool setRuneMode(uint8_t mode); 
   bool setCarMode(uint8_t mode); 
+
+  tf2::Quaternion slerpSafe(const tf2::Quaternion & from, const tf2::Quaternion & to, double alpha);
 
   // Serial port
   std::unique_ptr<IoContext> owned_ctx_;
@@ -94,6 +103,39 @@ private:
 
   rclcpp::Subscription<auto_aim_interfaces::msg::Firecontrol>::SharedPtr target_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr nav_sub_;
+
+  tf2::Quaternion yaw_imu_q_{0, 0, 0, 1};
+  tf2::Quaternion aim_imu_q_{0, 0, 0, 1};
+  tf2::Quaternion lidar_imu_q_{0, 0, 0, 1};
+  rclcpp::Time yaw_imu_stamp_;
+  rclcpp::Time aim_imu_stamp_;
+  rclcpp::Time lidar_imu_stamp_;
+  bool has_yaw_imu_ = false;
+  bool has_aim_imu_ = false;
+  bool has_lidar_imu_ = false;
+
+  float motor_yaw_ = 0.0F;
+  float motor_pitch_ = 0.0F;
+  rclcpp::Time motor_stamp_;
+  bool has_motor_feedback_ = false;
+
+  tf2::Quaternion q_odom_omni_to_odom_aim_{0, 0, 0, 1};
+  tf2::Quaternion q_odom_to_odom_omni_{0, 0, 0, 1};
+  tf2::Quaternion q_odom_omni_to_odom_aim_fused_{0, 0, 0, 1};
+  tf2::Quaternion q_odom_to_odom_omni_fused_{0, 0, 0, 1};
+  bool has_odom_omni_to_odom_aim_ = false;
+  bool has_odom_to_odom_omni_ = false;
+  bool has_fused_odom_omni_to_odom_aim_ = false;
+  bool has_fused_odom_to_odom_omni_ = false;
+
+  double comp_alpha_yaw_aim_ = 0.2;
+  double comp_alpha_lidar_yaw_ = 0.2;
+  double comp_alpha_motor_vs_imu_ = 0.7;
+
+  std::mutex transform_mutex_;
+
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
 
   // For debug usage

@@ -2,8 +2,14 @@
 // Licensed under the Apache-2.0 License.
 
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Vector3.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/time.h>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 #include <iostream>
+#include <algorithm>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 #include <rclcpp/utilities.hpp>
@@ -39,7 +45,12 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
   // TF broadcaster
   timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
+  comp_alpha_yaw_aim_ = this->declare_parameter("comp_alpha_yaw_aim", 0.2);
+  comp_alpha_lidar_yaw_ = this->declare_parameter("comp_alpha_lidar_yaw", 0.2);
+  comp_alpha_motor_vs_imu_ = this->declare_parameter("comp_alpha_motor_vs_imu", 0.7);
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
   // Create Publisher
   latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
@@ -104,8 +115,6 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
     "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
     std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
-    
-
 }
 
 RMSerialDriver::~RMSerialDriver()
@@ -150,27 +159,61 @@ void RMSerialDriver::receiveData()
             previous_receive_color_ = packet.detect_color;
           }
 
-          
+          tf2::Quaternion yaw_q(
+            packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2], packet.yaw_imu_q[3]);
+          tf2::Quaternion aim_q(
+            packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2], packet.aim_imu_q[3]);
+          yaw_q.normalize();
+          aim_q.normalize();
+
+          float motor_yaw = packet.motor_yaw;
+          float motor_pitch = packet.motor_pitch;
+
+          {
+            std::lock_guard<std::mutex> lock(transform_mutex_);
+            yaw_imu_q_ = yaw_q;
+            aim_imu_q_ = aim_q;
+            yaw_imu_stamp_ = this->now();
+            aim_imu_stamp_ = yaw_imu_stamp_;
+            has_yaw_imu_ = true;
+            has_aim_imu_ = true;
+            motor_yaw_ = motor_yaw;
+            motor_pitch_ = motor_pitch;
+            motor_stamp_ = yaw_imu_stamp_;
+            has_motor_feedback_ = true;
+          }
+
+          updateOdomTransforms();
 
           mode_ = 9;
+
+          // Broadcast odom_omni -> omni_gimbal_link using yaw IMU as the parent orientation.
+          tf2::Quaternion q_rot;
+          geometry_msgs::msg::TransformStamped t_omni;
+          timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
+          t_omni.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+          t_omni.header.frame_id = "odom_omni";
+          t_omni.child_frame_id = "omni_gimbal_link";
+          q_rot.setRPY(0, 0, 0);
+          t_omni.transform.rotation = tf2::toMsg(yaw_q * q_rot);
+          t_omni.transform.translation.x = 0.0;
+          t_omni.transform.translation.y = 0.0;
+          t_omni.transform.translation.z = 0.0;
+          tf_broadcaster_->sendTransform(t_omni);
 
           geometry_msgs::msg::TransformStamped t;
           timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
           t.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
           t.header.frame_id = "odom_aim";
           t.child_frame_id = "gimbal_link";
-          tf2::Quaternion q_rot;
-          //double PI = 3.1415926;
           q_rot.setRPY(0, 0, 0);
-          tf2::Quaternion q(packet.q[1], packet.q[2], packet.q[3], packet.q[0]);
-          //std::cout<<packet.q[0]<<" "<<packet.q[1]<<" "<<packet.q[2]<<" "<<packet.q[3]<<std::endl;
-          double roll, pitch, yaw; 
-          tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-          q.setRPY(-pitch, roll, yaw);
-        
-          q_rot = q * q_rot;
-          t.transform.rotation = tf2::toMsg(q_rot);
+          t.transform.rotation = tf2::toMsg(aim_q * q_rot);
+          t_omni.transform.translation.x = 0.0;
+          t_omni.transform.translation.y = 0.0;
+          t_omni.transform.translation.z = 0.0;
           tf_broadcaster_->sendTransform(t);
+
+
           
           //publish game info
           std_msgs::msg::UInt16 sentryHP;
@@ -216,6 +259,119 @@ void RMSerialDriver::receiveData()
   }
 }
 
+void RMSerialDriver::updateOdomTransforms()
+{
+  geometry_msgs::msg::TransformStamped lidar_tf;
+  bool has_lidar_tf = false;
+  try {
+    lidar_tf = tf_buffer_->lookupTransform(
+      "odom", "base_link", tf2::TimePointZero, tf2::durationFromSec(0.05));
+    has_lidar_tf = true;
+  } catch (const tf2::TransformException & ex) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Failed to lookup odom->base_link: %s", ex.what());
+  }
+
+  if (has_lidar_tf) {
+    tf2::Quaternion lidar_q(
+      lidar_tf.transform.rotation.x, lidar_tf.transform.rotation.y,
+      lidar_tf.transform.rotation.z, lidar_tf.transform.rotation.w);
+    lidar_q.normalize();
+    std::lock_guard<std::mutex> lock(transform_mutex_);
+    lidar_imu_q_ = lidar_q;
+    lidar_imu_stamp_ = lidar_tf.header.stamp;
+    has_lidar_imu_ = true;
+  }
+
+  tf2::Quaternion yaw_q;
+  tf2::Quaternion aim_q;
+  tf2::Quaternion lidar_q;
+  float motor_yaw = 0.0F;
+  float motor_pitch = 0.0F;
+  bool has_yaw = false;
+  bool has_aim = false;
+  bool has_lidar = false;
+  bool has_motor = false;
+
+  {
+    std::lock_guard<std::mutex> lock(transform_mutex_);
+    yaw_q = yaw_imu_q_;
+    aim_q = aim_imu_q_;
+    lidar_q = lidar_imu_q_;
+    motor_yaw = motor_yaw_;
+    motor_pitch = motor_pitch_;
+    has_yaw = has_yaw_imu_;
+    has_aim = has_aim_imu_;
+    has_lidar = has_lidar_imu_;
+    has_motor = has_motor_feedback_;
+  }
+
+  const rclcpp::Time stamp = this->now();
+
+  if (has_yaw && has_aim) {
+    tf2::Quaternion q_rel = yaw_q.inverse() * aim_q;
+    q_rel.normalize();
+
+    if (has_motor) {
+      tf2::Quaternion q_mech;
+      // Motor feedback defines relative yaw then pitch in odom_omni frame; assume extrinsic yaw (Z) then pitch (Y).
+      q_mech.setRPY(0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
+      q_mech.normalize();
+      q_rel = slerpSafe(q_mech, q_rel, comp_alpha_motor_vs_imu_);
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(transform_mutex_);
+      q_odom_omni_to_odom_aim_ = q_rel;
+      has_odom_omni_to_odom_aim_ = true;
+      if (has_fused_odom_omni_to_odom_aim_) {
+        q_odom_omni_to_odom_aim_fused_ = slerpSafe(q_odom_omni_to_odom_aim_fused_, q_rel, comp_alpha_yaw_aim_);
+      } else {
+        q_odom_omni_to_odom_aim_fused_ = q_rel;
+        has_fused_odom_omni_to_odom_aim_ = true;
+      }
+    }
+
+    geometry_msgs::msg::TransformStamped t;
+    t.header.stamp = stamp;
+    t.header.frame_id = "odom_omni";
+    t.child_frame_id = "odom_aim";
+    t.transform.rotation = tf2::toMsg(q_odom_omni_to_odom_aim_fused_);
+    t.transform.translation.x = 0.0;
+    t.transform.translation.y = 0.0;
+    t.transform.translation.z = 0.0;
+    tf_broadcaster_->sendTransform(t);
+  }
+
+  if (has_lidar && has_yaw) {
+    tf2::Quaternion q_rel = lidar_q.inverse() * yaw_q;
+    q_rel.normalize();
+
+    {
+      std::lock_guard<std::mutex> lock(transform_mutex_);
+      q_odom_to_odom_omni_ = q_rel;
+      has_odom_to_odom_omni_ = true;
+      if (has_fused_odom_to_odom_omni_) {
+        q_odom_to_odom_omni_fused_ = slerpSafe(q_odom_to_odom_omni_fused_, q_rel, comp_alpha_lidar_yaw_);
+      } else {
+        q_odom_to_odom_omni_fused_ = q_rel;
+        has_fused_odom_to_odom_omni_ = true;
+      }
+    }
+
+    geometry_msgs::msg::TransformStamped t;
+    t.header.stamp = stamp;
+    t.header.frame_id = "odom";
+    t.child_frame_id = "odom_omni";
+    t.transform.rotation = tf2::toMsg(q_odom_to_odom_omni_fused_);
+    t.transform.translation.x = 0.0;
+    t.transform.translation.y = 0.0;
+    t.transform.translation.z = 0.0;
+    tf_broadcaster_->sendTransform(t);
+  }
+}
+
 void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg)
 {
   const static std::map<std::string, uint8_t> id_unit8_map{
@@ -227,10 +383,33 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 
     packet.tracking = msg->tracking;
     packet.id = id_unit8_map.at(msg->id);
-    packet.pitch = msg->pitch;
-    packet.yaw = msg->yaw;
     packet.iffire = msg->iffire;
-    std::cout << "pitch: " << packet.pitch << std::endl;
+
+    tf2::Quaternion target_in_aim;
+    target_in_aim.setRPY(0.0, msg->pitch, msg->yaw);
+
+    tf2::Quaternion target_in_omni = target_in_aim;
+    bool has_transform = false;
+
+    {
+      std::lock_guard<std::mutex> lock(transform_mutex_);
+      has_transform = has_fused_odom_omni_to_odom_aim_;
+      if (has_transform) {
+        target_in_omni = q_odom_omni_to_odom_aim_fused_ * target_in_aim;
+        target_in_omni.normalize();
+      }
+    }
+
+    if (!has_transform) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Transform odom_aim->odom_omni missing, forwarding aim command without frame conversion");
+    }
+
+    double roll = 0.0, pitch = 0.0, yaw = 0.0;
+    tf2::Matrix3x3(target_in_omni).getRPY(roll, pitch, yaw);
+    packet.pitch = static_cast<float>(pitch);
+    packet.yaw = static_cast<float>(yaw);
 
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
@@ -256,17 +435,35 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 
   try {
     SendNavPacket packet;
+    bool has_transform = false;
+    tf2::Quaternion q_rel;
 
-    packet.linear_x = static_cast<float>(msg->linear.x);
-    packet.linear_y = static_cast<float>(msg->linear.y);
-    packet.linear_z = static_cast<float>(msg->linear.z);
-    packet.angular_x = static_cast<float>(msg->angular.x);
-    packet.angular_y = static_cast<float>(msg->angular.y);
-    packet.angular_z = static_cast<float>(msg->angular.z);
-    std::cout << "linear_x: " << packet.linear_x << std::endl;
+    {
+      std::lock_guard<std::mutex> lock(transform_mutex_);
+      has_transform = has_fused_odom_to_odom_omni_;
+      q_rel = q_odom_to_odom_omni_fused_;
+    }
 
-    crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+    if (!has_transform) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Skipping nav send because odom->odom_omni transform is unavailable");
+      return;
+    }
 
+    tf2::Vector3 linear(msg->linear.x, msg->linear.y, msg->linear.z);
+    tf2::Vector3 angular(msg->angular.x, msg->angular.y, msg->angular.z);
+
+    tf2::Vector3 linear_in_omni = tf2::quatRotate(q_rel, linear);
+    tf2::Vector3 angular_in_omni = tf2::quatRotate(q_rel, angular);
+
+    packet.linear_x = static_cast<float>(linear_in_omni.x());
+    packet.linear_y = static_cast<float>(linear_in_omni.y());
+    packet.linear_z = static_cast<float>(linear_in_omni.z());
+
+    packet.angular_x = static_cast<float>(angular_in_omni.x());
+    packet.angular_y = static_cast<float>(angular_in_omni.y());
+    packet.angular_z = static_cast<float>(angular_in_omni.z());
     std::vector<uint8_t> data = toVector(packet);
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -300,6 +497,17 @@ void RMSerialDriver::setDecisionCallback(
     reopenPort();
   }
 } 
+
+tf2::Quaternion RMSerialDriver::slerpSafe(const tf2::Quaternion & from, const tf2::Quaternion & to, double alpha)
+{
+  double a = std::clamp(alpha, 0.0, 1.0);
+  // tf2::slerp handles normalization internally; ensure inputs are normalized.
+  tf2::Quaternion f = from; f.normalize();
+  tf2::Quaternion t = to; t.normalize();
+  tf2::Quaternion r = tf2::slerp(f, t, a);
+  r.normalize();
+  return r;
+}
 
 void RMSerialDriver::getParams()
 {
