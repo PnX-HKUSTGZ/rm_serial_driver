@@ -48,6 +48,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   comp_alpha_yaw_aim_ = this->declare_parameter("comp_alpha_yaw_aim", 0.2);
   comp_alpha_lidar_yaw_ = this->declare_parameter("comp_alpha_lidar_yaw", 0.2);
   comp_alpha_motor_vs_imu_ = this->declare_parameter("comp_alpha_motor_vs_imu", 0.7);
+  pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true);
   tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
   tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -164,10 +165,20 @@ void RMSerialDriver::receiveData()
           tf2::Quaternion aim_q(
             packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2], packet.aim_imu_q[3]);
           yaw_q.normalize();
-          aim_q.normalize();
 
           float motor_yaw = packet.motor_yaw;
           float motor_pitch = packet.motor_pitch;
+
+          if (pitch_imu_enabled_) {
+            aim_q.normalize();
+          } else {
+            // When pitch IMU is absent, derive aim orientation from yaw IMU plus motor feedback.
+            tf2::Quaternion q_mech;
+            q_mech.setRPY(0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
+            q_mech.normalize();
+            aim_q = yaw_q * q_mech;
+            aim_q.normalize();
+          }
 
           {
             std::lock_guard<std::mutex> lock(transform_mutex_);
@@ -176,7 +187,7 @@ void RMSerialDriver::receiveData()
             yaw_imu_stamp_ = this->now();
             aim_imu_stamp_ = yaw_imu_stamp_;
             has_yaw_imu_ = true;
-            has_aim_imu_ = true;
+            has_aim_imu_ = pitch_imu_enabled_;
             motor_yaw_ = motor_yaw;
             motor_pitch_ = motor_pitch;
             motor_stamp_ = yaw_imu_stamp_;
@@ -233,7 +244,7 @@ void RMSerialDriver::receiveData()
           enemy_outpostHP.data = packet.enemy_outpostHP;
           //std::cout<<"enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
-          std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " enemy_baseHP: " << enemy_baseHP.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
+          // std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " enemy_baseHP: " << enemy_baseHP.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
           sentry_health_pub_->publish(sentryHP);
           our_base_health_pub_->publish(our_baseHP);
@@ -309,7 +320,28 @@ void RMSerialDriver::updateOdomTransforms()
 
   const rclcpp::Time stamp = this->now();
 
-  if (has_yaw && has_aim) {
+  if (!pitch_imu_enabled_) {
+    if (has_yaw) {
+      tf2::Quaternion identity_q(0.0, 0.0, 0.0, 1.0);
+      {
+        std::lock_guard<std::mutex> lock(transform_mutex_);
+        q_odom_omni_to_odom_aim_ = identity_q;
+        q_odom_omni_to_odom_aim_fused_ = identity_q;
+        has_odom_omni_to_odom_aim_ = true;
+        has_fused_odom_omni_to_odom_aim_ = true;
+      }
+
+      geometry_msgs::msg::TransformStamped t;
+      t.header.stamp = stamp;
+      t.header.frame_id = "odom_omni";
+      t.child_frame_id = "odom_aim";
+      t.transform.rotation = tf2::toMsg(identity_q);
+      t.transform.translation.x = 0.0;
+      t.transform.translation.y = 0.0;
+      t.transform.translation.z = 0.0;
+      tf_broadcaster_->sendTransform(t);
+    }
+  } else if (has_yaw && has_aim) {
     tf2::Quaternion q_rel = yaw_q.inverse() * aim_q;
     q_rel.normalize();
 

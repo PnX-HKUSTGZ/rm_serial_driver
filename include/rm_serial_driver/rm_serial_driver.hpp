@@ -131,6 +131,7 @@ private:
   double comp_alpha_yaw_aim_ = 0.2;
   double comp_alpha_lidar_yaw_ = 0.2;
   double comp_alpha_motor_vs_imu_ = 0.7;
+  bool pitch_imu_enabled_ = true;
 
   std::mutex transform_mutex_;
 
