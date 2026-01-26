@@ -16,12 +16,13 @@ struct ReceivePacket
   uint8_t detect_color : 1;  // 0-red 1-blue
   //uint8_t set_mode : 4; // 0-outpost 6-guard 7-base 8-rune 9-auto
   uint8_t game_start : 1;
-  uint8_t reserved : 2;
+  uint8_t reserved : 6;
   uint16_t sentryHP;
   uint16_t our_baseHP;
   uint16_t enemy_baseHP;
   uint16_t our_outpostHP;
   uint16_t enemy_outpostHP;
+  uint16_t remain_ammo;
   float q[4]; // x y z w
   uint16_t checksum = 0;
 } __attribute__((packed));
