@@ -61,8 +61,9 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   enemy_base_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/enemy_base_health", 10);
   our_outpost_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/our_outpost_health", 10);
   enemy_outpost_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/enemy_outpost_health", 10);
+  remain_ammo_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/remain_ammo", 10);
 
-
+    
   // Detect parameter client
   detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
 
@@ -155,10 +156,6 @@ void RMSerialDriver::receiveData()
         bool crc_ok =
           crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
         if (crc_ok) {
-          if (!initial_set_param_ || packet.detect_color != previous_receive_color_) {
-            setParam(rclcpp::Parameter("detect_color", packet.detect_color));
-            previous_receive_color_ = packet.detect_color;
-          }
 
           tf2::Quaternion yaw_q(
             packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2], packet.yaw_imu_q[3]);
@@ -243,14 +240,17 @@ void RMSerialDriver::receiveData()
           std_msgs::msg::UInt16 enemy_outpostHP;
           enemy_outpostHP.data = packet.enemy_outpostHP;
           //std::cout<<"enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
+          std_msgs::msg::UInt16 remain_ammo;
+          remain_ammo.data = packet.remain_ammo;
 
-          // std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " enemy_baseHP: " << enemy_baseHP.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
+          //std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " remain ammo: " << remain_ammo.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
           sentry_health_pub_->publish(sentryHP);
           our_base_health_pub_->publish(our_baseHP);
           enemy_base_health_pub_->publish(enemy_baseHP);
           our_outpost_health_pub_->publish(our_outpostHP);
           enemy_outpost_health_pub_->publish(enemy_outpostHP);
+          remain_ammo_pub_->publish(remain_ammo);
           
           
           
@@ -463,8 +463,7 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
-  RCLCPP_INFO(get_logger(), "navCallback called");
-
+  
   try {
     SendNavPacket packet;
     bool has_transform = false;
@@ -521,6 +520,7 @@ void RMSerialDriver::setDecisionCallback(
 
     std::lock_guard<std::mutex> lock(mutex_);
     serial_driver_->port()->send(data);
+    std::cout<<"whether to enter outpost attack:"<<packet.ifreload<<std::endl;
     response->success = true;
     
   } catch (const std::exception & ex) {
