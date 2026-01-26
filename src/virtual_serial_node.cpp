@@ -34,36 +34,52 @@ class VirtualSerialNode : public rclcpp::Node
 
 public:
     explicit VirtualSerialNode(const rclcpp::NodeOptions & options) : Node("serial_driver", options)
-    {
+    {   try {
+        // 节点初始化代码
+
         RCLCPP_INFO(this->get_logger(), "Start VirtualSerialNode!");
-
-        // Detect parameter client
-        detector_param_client_ =
-            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
-        rune_detector_param_client_ =
-            std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
-
+        
         tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
         this->declare_parameter("vision_mode", static_cast<int>(0));
         this->declare_parameter("color", static_cast<int>(0));
         this->declare_parameter("has_rune", true);
+        this->declare_parameter("wide_cam", false); 
         this->declare_parameter("roll", 0.0);
         this->declare_parameter("pitch", 0.0);
         this->declare_parameter("yaw", 0.0);
+        
+        // Param client
+        has_wide_cam_ = this->get_parameter("wide_cam").as_bool();
+
+        // Detect parameter client
+        detector_param_client_ =
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
+        if(has_wide_cam_) {
+            detector_param_client_wide_ =
+                std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_wide");
+        }
+        rune_detector_param_client_ =
+            std::make_shared<rclcpp::AsyncParametersClient>(this, "rune_detector");
+
 
         transform_stamped_.header.frame_id = "odom";
         transform_stamped_.child_frame_id = "gimbal_link";
 
-        // Param client
         auto autoaim_set_mode_client_1 =
-            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector/set_mode");
+            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_main/set_mode");
         auto autoaim_set_mode_client_2 =
             this->create_client<auto_aim_interfaces::srv::SetMode>("armor_tracker/set_mode");
         set_mode_clients_.emplace(
             autoaim_set_mode_client_1->get_service_name(), autoaim_set_mode_client_1);
         set_mode_clients_.emplace(
             autoaim_set_mode_client_2->get_service_name(), autoaim_set_mode_client_2);
+        if(has_wide_cam_){
+            auto autoaim_set_mode_client_3 =
+            this->create_client<auto_aim_interfaces::srv::SetMode>("armor_detector_wide/set_mode");
+            set_mode_clients_.emplace(
+            autoaim_set_mode_client_3->get_service_name(), autoaim_set_mode_client_3);
+        }
         has_rune_ = this->get_parameter("has_rune").as_bool();
         if (has_rune_) {
             auto client1 =
@@ -109,6 +125,12 @@ public:
                 }
             }
         });
+        }catch (const std::exception& e) {
+            RCLCPP_FATAL(this->get_logger(), "Initialization failed: %s", e.what());
+            throw;
+        }
+
+
     }
 
     void setMode(SetModeClient & client, const uint8_t mode)
@@ -148,7 +170,7 @@ public:
     void setParam(const rclcpp::Parameter & param)
     {
         if (!detector_param_client_->service_is_ready()) {
-            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+            RCLCPP_WARN(get_logger(), "Main Detector Service not ready, skipping parameter set");
             return;
         }
         if (!set_param_future_.valid() ||
@@ -168,12 +190,35 @@ public:
                     initial_set_param_ = true;
                 });
         }
+        if (has_wide_cam_) {
+            if (!detector_param_client_wide_->service_is_ready()) {
+                RCLCPP_WARN(get_logger(), "Wide detector service not ready, skipping parameter set");
+                return;
+            }
+
+            if (!set_param_future_wide_.valid() ||
+                set_param_future_wide_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                RCLCPP_INFO(get_logger(), "Setting wide detect_color to %ld...", param.as_int());
+                set_param_future_wide_ = detector_param_client_wide_->set_parameters(
+                    {param}, [this, param](const ResultFuturePtr & results) {
+                        for (const auto & result : results.get()) {
+                            if (!result.successful) {
+                                RCLCPP_ERROR(
+                                    get_logger(), "Failed to set wide parameter: %s", result.reason.c_str());
+                                return;
+                            }
+                        }
+                        RCLCPP_INFO(
+                            get_logger(), "Successfully set wide detect_color to %ld!", param.as_int());
+                    });
+            }
+        }
     }
 
     void setRuneParam(const rclcpp::Parameter & param)
     {
         if (!rune_detector_param_client_->service_is_ready()) {
-            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+            RCLCPP_WARN(get_logger(), "Rune Detector Service not ready, skipping parameter set");
             return;
         }
 
@@ -211,8 +256,11 @@ private:
     ResultFuturePtr set_param_future_;
     rclcpp::AsyncParametersClient::SharedPtr rune_detector_param_client_;
     ResultFuturePtr set_rune_param_future_;
+    rclcpp::AsyncParametersClient::SharedPtr detector_param_client_wide_;
+    ResultFuturePtr set_param_future_wide_;
 
     bool has_rune_;
+    bool has_wide_cam_;
 
     std::unordered_map<std::string, SetModeClient> set_mode_clients_;
     inline Eigen::Vector3d getRPY(const Eigen::Matrix3d & rotation_matrix)
