@@ -17,6 +17,8 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 // C++ system
+#include <auto_aim_interfaces/msg/firecontrol.hpp>
+#include <auto_aim_interfaces/srv/set_mode.hpp>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -27,9 +29,6 @@
 #include "rm_serial_driver/crc.hpp"
 #include "rm_serial_driver/packet.hpp"
 #include "rm_serial_driver/rm_serial_driver.hpp"
-#include <auto_aim_interfaces/msg/firecontrol.hpp>
-#include <auto_aim_interfaces/srv/set_mode.hpp>
-
 
 
 namespace rm_serial_driver
@@ -39,9 +38,9 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
   owned_ctx_{new IoContext(2)},
   serial_driver_{new drivers::serial_driver::SerialDriver(*owned_ctx_)}
 {
-  RCLCPP_INFO(get_logger(), "Start RMSerialDriver!");
+    RCLCPP_INFO(get_logger(), "Start RMSerialDriver!");
 
-  getParams();
+    getParams();
 
   // TF broadcaster
   timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
@@ -92,11 +91,6 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
       serial_driver_->port()->open();
       receive_thread_ = std::thread(&RMSerialDriver::receiveData, this);
     }
-  } catch (const std::exception & ex) {
-    RCLCPP_ERROR(
-      get_logger(), "Error creating serial port: %s - %s", device_name_.c_str(), ex.what());
-    throw ex;
-  }
 
   aiming_point_.header.frame_id = "odom_aim";
   aiming_point_.ns = "aiming_point";
@@ -121,17 +115,17 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
 RMSerialDriver::~RMSerialDriver()
 {
-  if (receive_thread_.joinable()) {
-    receive_thread_.join();
-  }
+    if (receive_thread_.joinable()) {
+        receive_thread_.join();
+    }
 
-  if (serial_driver_->port()->is_open()) {
-    serial_driver_->port()->close();
-  }
+    if (serial_driver_->port()->is_open()) {
+        serial_driver_->port()->close();
+    }
 
-  if (owned_ctx_) {
-    owned_ctx_->waitForExit();
-  }
+    if (owned_ctx_) {
+        owned_ctx_->waitForExit();
+    }
 }
 
 void RMSerialDriver::receiveData()
@@ -150,8 +144,9 @@ void RMSerialDriver::receiveData()
         data.resize(sizeof(ReceivePacket) - 1);
         serial_driver_->port()->receive(data);
 
-        data.insert(data.begin(), header[0]);
-        ReceivePacket packet = fromVector(data);
+            if (header[0] == 0x5A) {
+                data.resize(sizeof(ReceivePacket) - 1);
+                serial_driver_->port()->receive(data);
 
         bool crc_ok =
           crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
@@ -267,7 +262,6 @@ void RMSerialDriver::receiveData()
         get_logger(), *get_clock(), 20, "Error while receiving data: %s", ex.what());
       reopenPort();
     }
-  }
 }
 
 void RMSerialDriver::updateOdomTransforms()
@@ -406,9 +400,9 @@ void RMSerialDriver::updateOdomTransforms()
 
 void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg)
 {
-  const static std::map<std::string, uint8_t> id_unit8_map{
-    {"", 0},  {"outpost", 0}, {"1", 1}, {"1", 1},     {"2", 2},
-    {"3", 3}, {"4", 4},       {"5", 5}, {"guard", 6}, {"base", 7}, {"rune", 8}};
+    const static std::map<std::string, uint8_t> id_unit8_map{
+        {"", 0},  {"outpost", 0}, {"1", 1},     {"1", 1},    {"2", 2},   {"3", 3},
+        {"4", 4}, {"5", 5},       {"guard", 6}, {"base", 7}, {"rune", 8}};
 
   try {
     SendAimPacket packet;
@@ -445,7 +439,7 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
-    std::vector<uint8_t> data = toVector(packet);
+        std::vector<uint8_t> data = toVector(packet);
 
     std::lock_guard<std::mutex> lock(mutex_);
     serial_driver_->port()->send(data);
@@ -543,196 +537,259 @@ tf2::Quaternion RMSerialDriver::slerpSafe(const tf2::Quaternion & from, const tf
 
 void RMSerialDriver::getParams()
 {
-  using FlowControl = drivers::serial_driver::FlowControl;
-  using Parity = drivers::serial_driver::Parity;
-  using StopBits = drivers::serial_driver::StopBits;
+    using FlowControl = drivers::serial_driver::FlowControl;
+    using Parity = drivers::serial_driver::Parity;
+    using StopBits = drivers::serial_driver::StopBits;
 
-  uint32_t baud_rate{};
-  auto fc = FlowControl::NONE;
-  auto pt = Parity::NONE;
-  auto sb = StopBits::ONE;
+    uint32_t baud_rate{};
+    auto fc = FlowControl::NONE;
+    auto pt = Parity::NONE;
+    auto sb = StopBits::ONE;
 
-  try {
-    device_name_ = declare_parameter<std::string>("device_name", "");
-  } catch (rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "The device name provided was invalid");
-    throw ex;
-  }
-
-  try {
-    baud_rate = declare_parameter<int>("baud_rate", 0);
-  } catch (rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "The baud_rate provided was invalid");
-    throw ex;
-  }
-
-  try {
-    const auto fc_string = declare_parameter<std::string>("flow_control", "");
-
-    if (fc_string == "none") {
-      fc = FlowControl::NONE;
-    } else if (fc_string == "hardware") {
-      fc = FlowControl::HARDWARE;
-    } else if (fc_string == "software") {
-      fc = FlowControl::SOFTWARE;
-    } else {
-      throw std::invalid_argument{
-        "The flow_control parameter must be one of: none, software, or hardware."};
+    try {
+        device_name_ = declare_parameter<std::string>("device_name", "");
+    } catch (rclcpp::ParameterTypeException & ex) {
+        RCLCPP_ERROR(get_logger(), "The device name provided was invalid");
+        throw ex;
     }
-  } catch (rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "The flow_control provided was invalid");
-    throw ex;
-  }
 
-  try {
-    const auto pt_string = declare_parameter<std::string>("parity", "");
-
-    if (pt_string == "none") {
-      pt = Parity::NONE;
-    } else if (pt_string == "odd") {
-      pt = Parity::ODD;
-    } else if (pt_string == "even") {
-      pt = Parity::EVEN;
-    } else {
-      throw std::invalid_argument{"The parity parameter must be one of: none, odd, or even."};
+    try {
+        baud_rate = declare_parameter<int>("baud_rate", 0);
+    } catch (rclcpp::ParameterTypeException & ex) {
+        RCLCPP_ERROR(get_logger(), "The baud_rate provided was invalid");
+        throw ex;
     }
-  } catch (rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "The parity provided was invalid");
-    throw ex;
-  }
 
-  try {
-    const auto sb_string = declare_parameter<std::string>("stop_bits", "");
+    try {
+        const auto fc_string = declare_parameter<std::string>("flow_control", "");
 
-    if (sb_string == "1" || sb_string == "1.0") {
-      sb = StopBits::ONE;
-    } else if (sb_string == "1.5") {
-      sb = StopBits::ONE_POINT_FIVE;
-    } else if (sb_string == "2" || sb_string == "2.0") {
-      sb = StopBits::TWO;
-    } else {
-      throw std::invalid_argument{"The stop_bits parameter must be one of: 1, 1.5, or 2."};
+        if (fc_string == "none") {
+            fc = FlowControl::NONE;
+        } else if (fc_string == "hardware") {
+            fc = FlowControl::HARDWARE;
+        } else if (fc_string == "software") {
+            fc = FlowControl::SOFTWARE;
+        } else {
+            throw std::invalid_argument{
+                "The flow_control parameter must be one of: none, software, or hardware."};
+        }
+    } catch (rclcpp::ParameterTypeException & ex) {
+        RCLCPP_ERROR(get_logger(), "The flow_control provided was invalid");
+        throw ex;
     }
-  } catch (rclcpp::ParameterTypeException & ex) {
-    RCLCPP_ERROR(get_logger(), "The stop_bits provided was invalid");
-    throw ex;
-  }
 
-  device_config_ =
-    std::make_unique<drivers::serial_driver::SerialPortConfig>(baud_rate, fc, pt, sb);
+    try {
+        const auto pt_string = declare_parameter<std::string>("parity", "");
+
+        if (pt_string == "none") {
+            pt = Parity::NONE;
+        } else if (pt_string == "odd") {
+            pt = Parity::ODD;
+        } else if (pt_string == "even") {
+            pt = Parity::EVEN;
+        } else {
+            throw std::invalid_argument{"The parity parameter must be one of: none, odd, or even."};
+        }
+    } catch (rclcpp::ParameterTypeException & ex) {
+        RCLCPP_ERROR(get_logger(), "The parity provided was invalid");
+        throw ex;
+    }
+
+    try {
+        const auto sb_string = declare_parameter<std::string>("stop_bits", "");
+
+        if (sb_string == "1" || sb_string == "1.0") {
+            sb = StopBits::ONE;
+        } else if (sb_string == "1.5") {
+            sb = StopBits::ONE_POINT_FIVE;
+        } else if (sb_string == "2" || sb_string == "2.0") {
+            sb = StopBits::TWO;
+        } else {
+            throw std::invalid_argument{"The stop_bits parameter must be one of: 1, 1.5, or 2."};
+        }
+    } catch (rclcpp::ParameterTypeException & ex) {
+        RCLCPP_ERROR(get_logger(), "The stop_bits provided was invalid");
+        throw ex;
+    }
+
+    device_config_ =
+        std::make_unique<drivers::serial_driver::SerialPortConfig>(baud_rate, fc, pt, sb);
 }
 
 void RMSerialDriver::reopenPort()
 {
-  RCLCPP_WARN(get_logger(), "Attempting to reopen port");
-  try {
-    if (serial_driver_->port()->is_open()) {
-      serial_driver_->port()->close();
+    RCLCPP_WARN(get_logger(), "Attempting to reopen port");
+    try {
+        if (serial_driver_->port()->is_open()) {
+            serial_driver_->port()->close();
+        }
+        serial_driver_->port()->open();
+        RCLCPP_INFO(get_logger(), "Successfully reopened port");
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(get_logger(), "Error while reopening port: %s", ex.what());
+        if (rclcpp::ok()) {
+            rclcpp::sleep_for(std::chrono::seconds(1));
+            reopenPort();
+        }
     }
-    serial_driver_->port()->open();
-    RCLCPP_INFO(get_logger(), "Successfully reopened port");
-  } catch (const std::exception & ex) {
-    RCLCPP_ERROR(get_logger(), "Error while reopening port: %s", ex.what());
-    if (rclcpp::ok()) {
-      rclcpp::sleep_for(std::chrono::seconds(1));
-      reopenPort();
-    }
-  }
 }
 
 void RMSerialDriver::setParam(const rclcpp::Parameter & param)
 {
-  if (!detector_param_client_->service_is_ready()) {
-    RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
-    return;
-  }
+    if (!detector_param_client_->service_is_ready()) {
+        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set (main)");
+        return;
+    }
 
-  if (
-    !set_param_future_.valid() ||
-    set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-    RCLCPP_INFO(get_logger(), "Setting detect_color to %ld...", param.as_int());
-    set_param_future_ = detector_param_client_->set_parameters(
-      {param}, [this, param](const ResultFuturePtr & results) {
-        for (const auto & result : results.get()) {
-          if (!result.successful) {
-            RCLCPP_ERROR(get_logger(), "Failed to set parameter: %s", result.reason.c_str());
-            return;
-          }
+    if (!set_param_future_.valid() ||
+        set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        RCLCPP_INFO(get_logger(), "Setting detect_color to %ld...", param.as_int());
+        set_param_future_ = detector_param_client_->set_parameters(
+            {param}, [this, param](const ResultFuturePtr & results) {
+                for (const auto & result : results.get()) {
+                    if (!result.successful) {
+                        RCLCPP_ERROR(
+                            get_logger(), "Failed to set parameter: %s", result.reason.c_str());
+                        return;
+                    }
+                }
+                RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
+                initial_set_param_ = true;
+            });
+    }
+
+    if (has_wide_cam_) {
+        if (!detector_param_client_wide_->service_is_ready()) {
+            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set (wide)");
+        } else {
+            set_param_future_wide_ = detector_param_client_wide_->set_parameters(
+                {param}, [this, param](const ResultFuturePtr & results) {
+                    for (const auto & result : results.get()) {
+                        if (!result.successful) {
+                            RCLCPP_ERROR(get_logger(), "Failed to set wide parameter: %s", result.reason.c_str());
+                            return;
+                        }
+                    }
+                    RCLCPP_INFO(get_logger(), "Successfully set wide detect_color to %ld!", param.as_int());
+                });
         }
-        RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
-        initial_set_param_ = true;
-      });
-  }
+    }
+}
+
+void RMSerialDriver::setRuneParam(const rclcpp::Parameter & param)
+{
+    if (!rune_detector_param_client_->service_is_ready()) {
+        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+        return;
+    }
+
+    if (!set_rune_param_future_.valid() ||
+        set_rune_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        RCLCPP_INFO(get_logger(), "Setting rune_detect_color to %ld...", param.as_int());
+        set_rune_param_future_ = rune_detector_param_client_->set_parameters(
+            {param}, [this, param](const ResultFuturePtr & results) {
+                for (const auto & result : results.get()) {
+                    if (!result.successful) {
+                        RCLCPP_ERROR(
+                            get_logger(), "Failed to set parameter: %s", result.reason.c_str());
+                        return;
+                    }
+                }
+                RCLCPP_INFO(
+                    get_logger(), "Successfully set rune_detect_color to %ld!", param.as_int());
+                initial_set_rune_param_ = true;
+            });
+    }
 }
 
 void RMSerialDriver::resetTracker()
 {
-  if (!reset_tracker_client_->service_is_ready()) {
-    RCLCPP_WARN(get_logger(), "Service not ready, skipping tracker reset");
-    return;
-  }
+    if (!reset_tracker_client_->service_is_ready()) {
+        RCLCPP_WARN(get_logger(), "Service not ready, skipping tracker reset");
+        return;
+    }
 
-  auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-  reset_tracker_client_->async_send_request(request);
-  RCLCPP_INFO(get_logger(), "Reset tracker!");
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    reset_tracker_client_->async_send_request(request);
+    RCLCPP_INFO(get_logger(), "Reset tracker!");
 }
 
 bool RMSerialDriver::setRuneMode(uint8_t mode)
 {
-  if (!set_rune_solver_mode_client_->service_is_ready() || !set_rune_detector_mode_client_->service_is_ready()) {
-    RCLCPP_WARN(get_logger(), "Service not ready, skipping set rune mode");
-    return 0;
-  }
-  
-
-  auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
-  request->mode = mode;
-
-  auto result_tracker_future = set_rune_solver_mode_client_->async_send_request(request);
-  auto result_detector_future = set_rune_detector_mode_client_->async_send_request(request);
-
-  try {
-    auto result1 = result_tracker_future.get();
-    auto result2 = result_detector_future.get();
-    if (result1->success && result2->success) {
-      RCLCPP_INFO(get_logger(), "Successfully set rune mode to %d", mode);
-      return true;
-    } else {
-      RCLCPP_ERROR(get_logger(), "Failed to set rune mode: %s and %s", result1->message.c_str(), result2->message.c_str());
+    if (!set_rune_solver_mode_client_->service_is_ready() ||
+        !set_rune_detector_mode_client_->service_is_ready()) {
+        RCLCPP_WARN(get_logger(), "Service not ready, skipping set rune mode");
+        return 0;
     }
-  } catch (const std::exception &ex) {
-    RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
-  }
-  return false;
+
+    auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
+    request->mode = mode;
+
+    auto result_tracker_future = set_rune_solver_mode_client_->async_send_request(request);
+    auto result_detector_future = set_rune_detector_mode_client_->async_send_request(request);
+
+    try {
+        auto result1 = result_tracker_future.get();
+        auto result2 = result_detector_future.get();
+        if (result1->success && result2->success) {
+            RCLCPP_INFO(get_logger(), "Successfully set rune mode to %d", mode);
+            return true;
+        } else {
+            RCLCPP_ERROR(
+                get_logger(), "Failed to set rune mode: %s and %s", result1->message.c_str(),
+                result2->message.c_str());
+        }
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
+    }
+    return false;
 }
 
 bool RMSerialDriver::setCarMode(uint8_t mode)
 {
-  if (!set_car_tracker_mode_client_->service_is_ready() || !set_car_detector_mode_client_->service_is_ready()) {
-    RCLCPP_WARN(get_logger(), "Service not ready, skipping set car mode");
-    return 0;
-  }
-  
-
-  auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
-  request->mode = mode;
-
-  auto result_tracker_future = set_car_tracker_mode_client_->async_send_request(request);
-  auto result_detector_future = set_car_detector_mode_client_->async_send_request(request);
-
-  try {
-    auto result1 = result_tracker_future.get();
-    auto result2 = result_detector_future.get();
-    if (result1->success && result2->success) {
-      RCLCPP_INFO(get_logger(), "Successfully set car mode to %d", mode);
-      return true;
-    } else {
-      RCLCPP_ERROR(get_logger(), "Failed to set car mode: %s and %s", result1->message.c_str(), result2->message.c_str());
+    if (!set_car_tracker_mode_client_->service_is_ready() ||
+        !set_car_detector_mode_client_->service_is_ready()||
+        (has_wide_cam_ && !set_car_detector_mode_client_wide_->service_is_ready())) {
+        RCLCPP_WARN(get_logger(), "Service not ready, skipping set car mode");
+        return 0;
     }
-  } catch (const std::exception &ex) {
-    RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
-  }
-  return false;
+
+    auto request = std::make_shared<auto_aim_interfaces::srv::SetMode::Request>();
+    request->mode = mode;
+
+    auto result_tracker_future = set_car_tracker_mode_client_->async_send_request(request);
+    auto result_detector_future = set_car_detector_mode_client_->async_send_request(request);
+    
+    rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedFuture result_detector_future_wide;
+    if(has_wide_cam_){
+        result_detector_future_wide = set_car_detector_mode_client_wide_->async_send_request(request).future.share();
+    }
+
+    try {
+        auto result1 = result_tracker_future.get();
+        auto result2 = result_detector_future.get();
+        
+        bool result3_success = true;
+        std::string result3_message = "";
+        
+        if(has_wide_cam_){
+            auto result3 = result_detector_future_wide.get();
+            result3_success = result3->success;
+            result3_message = result3->message;
+        }
+
+        if (result1->success && result2->success && result3_success) {
+            RCLCPP_INFO(get_logger(), "Successfully set car mode to %d", mode);
+            return true;
+        } else {
+            RCLCPP_ERROR(
+                get_logger(), "Failed to set car mode: %s and %s", result1->message.c_str(),
+                result2->message.c_str());
+        }
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(get_logger(), "Service call failed: %s", ex.what());
+    }
+    return false;
 }
 
 }  // namespace rm_serial_driver

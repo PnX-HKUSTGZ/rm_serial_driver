@@ -32,16 +32,22 @@ struct ReceivePacket
 
 struct SendAimPacket
 {
-  uint8_t header = 0xA5;
-  uint8_t tracking : 1;
-  uint8_t iffire : 1;
-  uint8_t id : 4;          // 0-outpost 6-guard 7-base  8-rune
-  uint8_t reserved : 2;
-  
-  float pitch;
-  float yaw;
-  
-  uint16_t checksum = 0;
+    uint8_t header = 0xA5;
+    uint8_t tracking : 1;
+    uint8_t iffire : 1;
+    uint8_t id : 4;  // 0-outpost 6-guard 7-base  8-rune
+    uint8_t reserved : 2;
+
+    float pitch;
+    float yaw;
+    float pitch_acc;
+    float pitch_vel;
+    float yaw_acc;
+    float yaw_vel;
+    float x;
+    float y;
+
+    uint16_t checksum = 0;
 } __attribute__((packed));
 
 struct SendNavPacket
@@ -74,9 +80,9 @@ struct SendDecisionPacket
 
 inline ReceivePacket fromVector(const std::vector<uint8_t> & data)
 {
-  ReceivePacket packet;
-  std::copy(data.begin(), data.end(), reinterpret_cast<uint8_t *>(&packet));
-  return packet;
+    ReceivePacket packet;
+    std::copy(data.begin(), data.end(), reinterpret_cast<uint8_t *>(&packet));
+    return packet;
 }
 
 template <typename T>
