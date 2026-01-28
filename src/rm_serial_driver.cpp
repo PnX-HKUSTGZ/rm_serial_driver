@@ -1,15 +1,15 @@
 // Copyright (c) 2022 ChenJun
 // Licensed under the Apache-2.0 License.
 
+#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Vector3.h>
-#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/time.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
-#include <iostream>
 #include <algorithm>
+#include <iostream>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 #include <rclcpp/utilities.hpp>
@@ -30,7 +30,6 @@
 #include "rm_serial_driver/packet.hpp"
 #include "rm_serial_driver/rm_serial_driver.hpp"
 
-
 namespace rm_serial_driver
 {
 RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
@@ -42,75 +41,85 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
     getParams();
 
-  // TF broadcaster
-  timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
-  comp_alpha_yaw_aim_ = this->declare_parameter("comp_alpha_yaw_aim", 0.2);
-  comp_alpha_lidar_yaw_ = this->declare_parameter("comp_alpha_lidar_yaw", 0.2);
-  comp_alpha_motor_vs_imu_ = this->declare_parameter("comp_alpha_motor_vs_imu", 0.7);
-  pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true);
-  tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
-  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    // TF broadcaster
+    timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
+    comp_alpha_yaw_aim_ = this->declare_parameter("comp_alpha_yaw_aim", 0.2);
+    comp_alpha_lidar_yaw_ = this->declare_parameter("comp_alpha_lidar_yaw", 0.2);
+    comp_alpha_motor_vs_imu_ = this->declare_parameter("comp_alpha_motor_vs_imu", 0.7);
+    pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true);
+    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-  // Create Publisher
-  latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
-  marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/aiming_point", 10);
-  sentry_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/ifhealth", 10);
-  our_base_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/our_base_health", 10);
-  enemy_base_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/enemy_base_health", 10);
-  our_outpost_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/our_outpost_health", 10);
-  enemy_outpost_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/enemy_outpost_health", 10);
-  remain_ammo_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/remain_ammo", 10);
+    // Create Publisher
+    latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
+    marker_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("/aiming_point", 10);
+    sentry_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/ifhealth", 10);
+    our_base_health_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/our_base_health", 10);
+    enemy_base_health_pub_ =
+        this->create_publisher<std_msgs::msg::UInt16>("/enemy_base_health", 10);
+    our_outpost_health_pub_ =
+        this->create_publisher<std_msgs::msg::UInt16>("/our_outpost_health", 10);
+    enemy_outpost_health_pub_ =
+        this->create_publisher<std_msgs::msg::UInt16>("/enemy_outpost_health", 10);
+    remain_ammo_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/remain_ammo", 10);
 
-    
-  // Detect parameter client
-  detector_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
+    // Detect parameter client
+    detector_param_client_ =
+        std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
 
-  // Tracker reset service client
-  reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
+    // Tracker reset service client
+    reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
 
-  // set mode service client
-  set_rune_detector_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_detector/set_mode");
-  set_rune_solver_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
-  set_car_detector_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector/set_mode");
-  set_car_tracker_mode_client_ = this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_tracker/set_mode");
+    // set mode service client
+    set_rune_detector_mode_client_ =
+        this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_detector/set_mode");
+    set_rune_solver_mode_client_ =
+        this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
+    set_car_detector_mode_client_ =
+        this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector/set_mode");
+    set_car_tracker_mode_client_ =
+        this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_tracker/set_mode");
 
-  // set decision service server
-  set_decision_service_server_ =
-    this->create_service<std_srvs::srv::SetBool>(
-      "/set_bool",
-      [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
-             std::shared_ptr<std_srvs::srv::SetBool::Response> response)
-      {
-        this->setDecisionCallback(request, response);
-      });
+    // set decision service server
+    set_decision_service_server_ = this->create_service<std_srvs::srv::SetBool>(
+        "/set_bool", [this](
+                         const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                         std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+            this->setDecisionCallback(request, response);
+        });
 
-  try {
-    serial_driver_->init_port(device_name_, *device_config_);
-    if (!serial_driver_->port()->is_open()) {
-      serial_driver_->port()->open();
-      receive_thread_ = std::thread(&RMSerialDriver::receiveData, this);
+    try {
+        serial_driver_->init_port(device_name_, *device_config_);
+        if (!serial_driver_->port()->is_open()) {
+            serial_driver_->port()->open();
+            receive_thread_ = std::thread(&RMSerialDriver::receiveData, this);
+        }
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(
+            get_logger(), "Error creating serial port: %s - %s", device_name_.c_str(), ex.what());
+        throw ex;
     }
 
-  aiming_point_.header.frame_id = "odom_aim";
-  aiming_point_.ns = "aiming_point";
-  aiming_point_.type = visualization_msgs::msg::Marker::SPHERE;
-  aiming_point_.action = visualization_msgs::msg::Marker::ADD;
-  aiming_point_.scale.x = aiming_point_.scale.y = aiming_point_.scale.z = 0.12;
-  aiming_point_.color.r = 1.0;
-  aiming_point_.color.g = 1.0;
-  aiming_point_.color.b = 1.0;
-  aiming_point_.color.a = 1.0;
-  aiming_point_.lifetime = rclcpp::Duration::from_seconds(0.1);
+    aiming_point_.header.frame_id = "odom_aim";
+    aiming_point_.ns = "aiming_point";
+    aiming_point_.type = visualization_msgs::msg::Marker::SPHERE;
+    aiming_point_.action = visualization_msgs::msg::Marker::ADD;
+    aiming_point_.scale.x = aiming_point_.scale.y = aiming_point_.scale.z = 0.12;
+    aiming_point_.color.r = 1.0;
+    aiming_point_.color.g = 1.0;
+    aiming_point_.color.b = 1.0;
+    aiming_point_.color.a = 1.0;
+    aiming_point_.lifetime = rclcpp::Duration::from_seconds(0.1);
 
-  // Create Subscription
-  target_sub_ = this->create_subscription<auto_aim_interfaces::msg::Firecontrol>(
-    "/firecontrol", rclcpp::QoS(rclcpp::KeepLast(1)),
-    std::bind(&RMSerialDriver::aimPointCallback, this, std::placeholders::_1));
+    // Create Subscription
+    target_sub_ = this->create_subscription<auto_aim_interfaces::msg::Firecontrol>(
+        "/firecontrol", rclcpp::QoS(rclcpp::KeepLast(1)),
+        std::bind(&RMSerialDriver::aimPointCallback, this, std::placeholders::_1));
 
-  nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
-    "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
-    std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
+    nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+        "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
+        std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
 }
 
 RMSerialDriver::~RMSerialDriver()
@@ -130,272 +139,280 @@ RMSerialDriver::~RMSerialDriver()
 
 void RMSerialDriver::receiveData()
 {
-  std::vector<uint8_t> header(1);
-  std::vector<uint8_t> data;
-  data.reserve(sizeof(ReceivePacket));
-  
-  while (rclcpp::ok()) {
-    try {
-      
-      serial_driver_->port()->receive(header);
-    
-      if (header[0] == 0x5A) {
-        
-        data.resize(sizeof(ReceivePacket) - 1);
-        serial_driver_->port()->receive(data);
+    std::vector<uint8_t> header(1);
+    std::vector<uint8_t> data;
+    data.reserve(sizeof(ReceivePacket));
+
+    while (rclcpp::ok()) {
+        try {
+            serial_driver_->port()->receive(header);
 
             if (header[0] == 0x5A) {
                 data.resize(sizeof(ReceivePacket) - 1);
                 serial_driver_->port()->receive(data);
 
-        bool crc_ok =
-          crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
-        if (crc_ok) {
+                data.insert(data.begin(), header[0]);
+                ReceivePacket packet = fromVector(data);
 
-          tf2::Quaternion yaw_q(
-            packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2], packet.yaw_imu_q[3]);
-          tf2::Quaternion aim_q(
-            packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2], packet.aim_imu_q[3]);
-          yaw_q.normalize();
+                bool crc_ok = crc16::Verify_CRC16_Check_Sum(
+                    reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
+                if (crc_ok) {
+                    tf2::Quaternion yaw_q(
+                        packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2],
+                        packet.yaw_imu_q[3]);
+                    tf2::Quaternion aim_q(
+                        packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2],
+                        packet.aim_imu_q[3]);
+                    yaw_q.normalize();
 
-          float motor_yaw = packet.motor_yaw;
-          float motor_pitch = packet.motor_pitch;
+                    float motor_yaw = packet.motor_yaw;
+                    float motor_pitch =
+                        -packet.motor_pitch;  // 电机编码器的正负和轴系的正负是相反的
 
-          if (pitch_imu_enabled_) {
-            aim_q.normalize();
-          } else {
-            // When pitch IMU is absent, derive aim orientation from yaw IMU plus motor feedback.
-            tf2::Quaternion q_mech;
-            q_mech.setRPY(0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
-            q_mech.normalize();
-            aim_q = yaw_q * q_mech;
-            aim_q.normalize();
-          }
+                    if (pitch_imu_enabled_) {
+                        aim_q.normalize();
+                    } else {
+                        // When pitch IMU is absent, derive aim orientation from yaw IMU plus motor feedback.
+                        tf2::Quaternion q_mech;
+                        q_mech.setRPY(
+                            0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
+                        q_mech.normalize();
+                        aim_q = yaw_q * q_mech;
+                        aim_q.normalize();
+                    }
 
-          {
-            std::lock_guard<std::mutex> lock(transform_mutex_);
-            yaw_imu_q_ = yaw_q;
-            aim_imu_q_ = aim_q;
-            yaw_imu_stamp_ = this->now();
-            aim_imu_stamp_ = yaw_imu_stamp_;
-            has_yaw_imu_ = true;
-            has_aim_imu_ = pitch_imu_enabled_;
-            motor_yaw_ = motor_yaw;
-            motor_pitch_ = motor_pitch;
-            motor_stamp_ = yaw_imu_stamp_;
-            has_motor_feedback_ = true;
-          }
+                    {
+                        std::lock_guard<std::mutex> lock(transform_mutex_);
+                        yaw_imu_q_ = yaw_q;
+                        aim_imu_q_ = aim_q;
+                        yaw_imu_stamp_ = this->now();
+                        aim_imu_stamp_ = yaw_imu_stamp_;
+                        has_yaw_imu_ = true;
+                        has_aim_imu_ = pitch_imu_enabled_;
+                        motor_yaw_ = motor_yaw;
+                        motor_pitch_ = motor_pitch;
+                        motor_stamp_ = yaw_imu_stamp_;
+                        has_motor_feedback_ = true;
+                    }
 
-          updateOdomTransforms();
+                    updateOdomTransforms();
 
-          mode_ = 9;
+                    mode_ = 9;
 
-          // Broadcast odom_omni -> omni_gimbal_link using yaw IMU as the parent orientation.
-          tf2::Quaternion q_rot;
-          geometry_msgs::msg::TransformStamped t_omni;
-          timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
-          t_omni.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
-          t_omni.header.frame_id = "odom_omni";
-          t_omni.child_frame_id = "omni_gimbal_link";
-          q_rot.setRPY(0, 0, 0);
-          t_omni.transform.rotation = tf2::toMsg(yaw_q * q_rot);
-          t_omni.transform.translation.x = 0.0;
-          t_omni.transform.translation.y = 0.0;
-          t_omni.transform.translation.z = 0.0;
-          tf_broadcaster_->sendTransform(t_omni);
+                    // Broadcast odom_omni -> omni_gimbal_link using yaw IMU as the parent orientation.
+                    tf2::Quaternion q_rot;
+                    geometry_msgs::msg::TransformStamped t_omni;
+                    timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
+                    t_omni.header.stamp =
+                        this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+                    t_omni.header.frame_id = "odom_omni";
+                    t_omni.child_frame_id = "omni_gimbal_link";
+                    q_rot.setRPY(0, 0, 0);
+                    t_omni.transform.rotation = tf2::toMsg(yaw_q * q_rot);
+                    t_omni.transform.translation.x = 0.0;
+                    t_omni.transform.translation.y = 0.0;
+                    t_omni.transform.translation.z = 0.0;
+                    tf_broadcaster_->sendTransform(t_omni);
 
-          geometry_msgs::msg::TransformStamped t;
-          timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
-          t.header.stamp = this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
-          t.header.frame_id = "odom_aim";
-          t.child_frame_id = "gimbal_link";
-          q_rot.setRPY(0, 0, 0);
-          t.transform.rotation = tf2::toMsg(aim_q * q_rot);
-          t_omni.transform.translation.x = 0.0;
-          t_omni.transform.translation.y = 0.0;
-          t_omni.transform.translation.z = 0.0;
-          tf_broadcaster_->sendTransform(t);
+                    geometry_msgs::msg::TransformStamped t;
+                    timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
+                    t.header.stamp =
+                        this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+                    t.header.frame_id = "odom_aim";
+                    t.child_frame_id = "gimbal_link";
+                    q_rot.setRPY(0, 0, 0);
+                    t.transform.rotation = tf2::toMsg(aim_q * q_rot);
+                    t_omni.transform.translation.x = 0.0;
+                    t_omni.transform.translation.y = 0.0;
+                    t_omni.transform.translation.z = 0.0;
+                    tf_broadcaster_->sendTransform(t);
 
+                    //publish game info
+                    std_msgs::msg::UInt16 sentryHP;
 
-          
-          //publish game info
-          std_msgs::msg::UInt16 sentryHP;
-          
-          sentryHP.data = packet.sentryHP;
-          //std::cout<<"sentHP: " << sentryHP.data << std::endl;
-          std_msgs::msg::UInt16 our_baseHP;
-          our_baseHP.data = packet.our_baseHP;
-          //std::cout<<"our_baseHP: " << our_baseHP.data << std::endl;
-          std_msgs::msg::UInt16 enemy_baseHP;
-          enemy_baseHP.data = packet.enemy_baseHP;
-          //std::cout<<"enemy_baseHP: " << enemy_baseHP.data << std::endl;
-          std_msgs::msg::UInt16 our_outpostHP;
-          our_outpostHP.data = packet.our_outpostHP;
-          //std::cout<<"our_outpostHP: " << our_outpostHP.data << std::endl;
-          std_msgs::msg::UInt16 enemy_outpostHP;
-          enemy_outpostHP.data = packet.enemy_outpostHP;
-          //std::cout<<"enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
-          std_msgs::msg::UInt16 remain_ammo;
-          remain_ammo.data = packet.remain_ammo;
+                    sentryHP.data = packet.sentryHP;
+                    //std::cout<<"sentHP: " << sentryHP.data << std::endl;
+                    std_msgs::msg::UInt16 our_baseHP;
+                    our_baseHP.data = packet.our_baseHP;
+                    //std::cout<<"our_baseHP: " << our_baseHP.data << std::endl;
+                    std_msgs::msg::UInt16 enemy_baseHP;
+                    enemy_baseHP.data = packet.enemy_baseHP;
+                    //std::cout<<"enemy_baseHP: " << enemy_baseHP.data << std::endl;
+                    std_msgs::msg::UInt16 our_outpostHP;
+                    our_outpostHP.data = packet.our_outpostHP;
+                    //std::cout<<"our_outpostHP: " << our_outpostHP.data << std::endl;
+                    std_msgs::msg::UInt16 enemy_outpostHP;
+                    enemy_outpostHP.data = packet.enemy_outpostHP;
+                    //std::cout<<"enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
+                    std_msgs::msg::UInt16 remain_ammo;
+                    remain_ammo.data = packet.remain_ammo;
 
-          //std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " remain ammo: " << remain_ammo.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
+                    //std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " remain ammo: " << remain_ammo.data << " our_outpostHP: " << our_outpostHP.data << " enemy_outpostHP: " << enemy_outpostHP.data << std::endl;
 
-          sentry_health_pub_->publish(sentryHP);
-          our_base_health_pub_->publish(our_baseHP);
-          enemy_base_health_pub_->publish(enemy_baseHP);
-          our_outpost_health_pub_->publish(our_outpostHP);
-          enemy_outpost_health_pub_->publish(enemy_outpostHP);
-          remain_ammo_pub_->publish(remain_ammo);
-          
-          
-          
-        } else {
-          RCLCPP_ERROR(get_logger(), "CRC error!");
+                    sentry_health_pub_->publish(sentryHP);
+                    our_base_health_pub_->publish(our_baseHP);
+                    enemy_base_health_pub_->publish(enemy_baseHP);
+                    our_outpost_health_pub_->publish(our_outpostHP);
+                    enemy_outpost_health_pub_->publish(enemy_outpostHP);
+                    remain_ammo_pub_->publish(remain_ammo);
+
+                } else {
+                    RCLCPP_ERROR(get_logger(), "CRC error!");
+                }
+            } else {
+                std::cout << "invalid header" << std::endl;
+                RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 20, "Invalid header: %02X", header[0]);
+            }
+        } catch (const std::exception & ex) {
+            std::cout << "Error while receiving data: " << ex.what() << std::endl;
+            RCLCPP_ERROR_THROTTLE(
+                get_logger(), *get_clock(), 20, "Error while receiving data: %s", ex.what());
+            reopenPort();
         }
-      } else {
-        std::cout<<"invalid header"<<std::endl;
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 20, "Invalid header: %02X", header[0]);
-      }
-    } catch (const std::exception & ex) {
-      std::cout << "Error while receiving data: " << ex.what() << std::endl;
-      RCLCPP_ERROR_THROTTLE(
-        get_logger(), *get_clock(), 20, "Error while receiving data: %s", ex.what());
-      reopenPort();
     }
 }
 
 void RMSerialDriver::updateOdomTransforms()
 {
-  geometry_msgs::msg::TransformStamped lidar_tf;
-  bool has_lidar_tf = false;
-  try {
-    lidar_tf = tf_buffer_->lookupTransform(
-      "odom", "base_link", tf2::TimePointZero, tf2::durationFromSec(0.05));
-    has_lidar_tf = true;
-  } catch (const tf2::TransformException & ex) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 2000,
-      "Failed to lookup odom->base_link: %s", ex.what());
-  }
+    geometry_msgs::msg::TransformStamped lidar_tf;
+    bool has_lidar_tf = false;
+    try {
+        std::string tf_err;
+        if (tf_buffer_->canTransform(
+                "odom", "base_link", tf2::TimePointZero, tf2::durationFromSec(0.0), &tf_err)) {
+            lidar_tf = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
+            has_lidar_tf = true;
+        } else {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000, "Failed to lookup odom->base_link: %s",
+                tf_err.c_str());
+        }
+    } catch (const tf2::TransformException & ex) {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 2000, "Failed to lookup odom->base_link: %s", ex.what());
+    }
 
-  if (has_lidar_tf) {
-    tf2::Quaternion lidar_q(
-      lidar_tf.transform.rotation.x, lidar_tf.transform.rotation.y,
-      lidar_tf.transform.rotation.z, lidar_tf.transform.rotation.w);
-    lidar_q.normalize();
-    std::lock_guard<std::mutex> lock(transform_mutex_);
-    lidar_imu_q_ = lidar_q;
-    lidar_imu_stamp_ = lidar_tf.header.stamp;
-    has_lidar_imu_ = true;
-  }
-
-  tf2::Quaternion yaw_q;
-  tf2::Quaternion aim_q;
-  tf2::Quaternion lidar_q;
-  float motor_yaw = 0.0F;
-  float motor_pitch = 0.0F;
-  bool has_yaw = false;
-  bool has_aim = false;
-  bool has_lidar = false;
-  bool has_motor = false;
-
-  {
-    std::lock_guard<std::mutex> lock(transform_mutex_);
-    yaw_q = yaw_imu_q_;
-    aim_q = aim_imu_q_;
-    lidar_q = lidar_imu_q_;
-    motor_yaw = motor_yaw_;
-    motor_pitch = motor_pitch_;
-    has_yaw = has_yaw_imu_;
-    has_aim = has_aim_imu_;
-    has_lidar = has_lidar_imu_;
-    has_motor = has_motor_feedback_;
-  }
-
-  const rclcpp::Time stamp = this->now();
-
-  if (!pitch_imu_enabled_) {
-    if (has_yaw) {
-      tf2::Quaternion identity_q(0.0, 0.0, 0.0, 1.0);
-      {
+    if (has_lidar_tf) {
+        tf2::Quaternion lidar_q(
+            lidar_tf.transform.rotation.x, lidar_tf.transform.rotation.y,
+            lidar_tf.transform.rotation.z, lidar_tf.transform.rotation.w);
+        lidar_q.normalize();
         std::lock_guard<std::mutex> lock(transform_mutex_);
-        q_odom_omni_to_odom_aim_ = identity_q;
-        q_odom_omni_to_odom_aim_fused_ = identity_q;
-        has_odom_omni_to_odom_aim_ = true;
-        has_fused_odom_omni_to_odom_aim_ = true;
-      }
-
-      geometry_msgs::msg::TransformStamped t;
-      t.header.stamp = stamp;
-      t.header.frame_id = "odom_omni";
-      t.child_frame_id = "odom_aim";
-      t.transform.rotation = tf2::toMsg(identity_q);
-      t.transform.translation.x = 0.0;
-      t.transform.translation.y = 0.0;
-      t.transform.translation.z = 0.0;
-      tf_broadcaster_->sendTransform(t);
+        lidar_imu_q_ = lidar_q;
+        lidar_imu_stamp_ = lidar_tf.header.stamp;
+        has_lidar_imu_ = true;
     }
-  } else if (has_yaw && has_aim) {
-    tf2::Quaternion q_rel = yaw_q.inverse() * aim_q;
-    q_rel.normalize();
 
-    if (has_motor) {
-      tf2::Quaternion q_mech;
-      // Motor feedback defines relative yaw then pitch in odom_omni frame; assume extrinsic yaw (Z) then pitch (Y).
-      q_mech.setRPY(0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
-      q_mech.normalize();
-      q_rel = slerpSafe(q_mech, q_rel, comp_alpha_motor_vs_imu_);
-    }
+    tf2::Quaternion yaw_q;
+    tf2::Quaternion aim_q;
+    tf2::Quaternion lidar_q;
+    float motor_yaw = 0.0F;
+    float motor_pitch = 0.0F;
+    bool has_yaw = false;
+    bool has_aim = false;
+    bool has_lidar = false;
+    bool has_motor = false;
 
     {
-      std::lock_guard<std::mutex> lock(transform_mutex_);
-      q_odom_omni_to_odom_aim_ = q_rel;
-      has_odom_omni_to_odom_aim_ = true;
-      if (has_fused_odom_omni_to_odom_aim_) {
-        q_odom_omni_to_odom_aim_fused_ = slerpSafe(q_odom_omni_to_odom_aim_fused_, q_rel, comp_alpha_yaw_aim_);
-      } else {
-        q_odom_omni_to_odom_aim_fused_ = q_rel;
-        has_fused_odom_omni_to_odom_aim_ = true;
-      }
+        std::lock_guard<std::mutex> lock(transform_mutex_);
+        yaw_q = yaw_imu_q_;
+        aim_q = aim_imu_q_;
+        lidar_q = lidar_imu_q_;
+        motor_yaw = motor_yaw_;
+        motor_pitch = motor_pitch_;
+        has_yaw = has_yaw_imu_;
+        has_aim = has_aim_imu_;
+        has_lidar = has_lidar_imu_;
+        has_motor = has_motor_feedback_;
     }
 
-    geometry_msgs::msg::TransformStamped t;
-    t.header.stamp = stamp;
-    t.header.frame_id = "odom_omni";
-    t.child_frame_id = "odom_aim";
-    t.transform.rotation = tf2::toMsg(q_odom_omni_to_odom_aim_fused_);
-    t.transform.translation.x = 0.0;
-    t.transform.translation.y = 0.0;
-    t.transform.translation.z = 0.0;
-    tf_broadcaster_->sendTransform(t);
-  }
+    const rclcpp::Time stamp = this->now();
 
-  if (has_lidar && has_yaw) {
-    tf2::Quaternion q_rel = lidar_q.inverse() * yaw_q;
-    q_rel.normalize();
+    if (!pitch_imu_enabled_) {
+        if (has_yaw) {
+            tf2::Quaternion identity_q(0.0, 0.0, 0.0, 1.0);
+            {
+                std::lock_guard<std::mutex> lock(transform_mutex_);
+                q_odom_omni_to_odom_aim_ = identity_q;
+                q_odom_omni_to_odom_aim_fused_ = identity_q;
+                has_odom_omni_to_odom_aim_ = true;
+                has_fused_odom_omni_to_odom_aim_ = true;
+            }
 
-    {
-      std::lock_guard<std::mutex> lock(transform_mutex_);
-      q_odom_to_odom_omni_ = q_rel;
-      has_odom_to_odom_omni_ = true;
-      if (has_fused_odom_to_odom_omni_) {
-        q_odom_to_odom_omni_fused_ = slerpSafe(q_odom_to_odom_omni_fused_, q_rel, comp_alpha_lidar_yaw_);
-      } else {
-        q_odom_to_odom_omni_fused_ = q_rel;
-        has_fused_odom_to_odom_omni_ = true;
-      }
+            geometry_msgs::msg::TransformStamped t;
+            t.header.stamp = stamp;
+            t.header.frame_id = "odom_omni";
+            t.child_frame_id = "odom_aim";
+            t.transform.rotation = tf2::toMsg(identity_q);
+            t.transform.translation.x = 0.0;
+            t.transform.translation.y = 0.0;
+            t.transform.translation.z = 0.0;
+            tf_broadcaster_->sendTransform(t);
+        }
+    } else if (has_yaw && has_aim) {
+        tf2::Quaternion q_rel = yaw_q.inverse() * aim_q;
+        q_rel.normalize();
+
+        if (has_motor) {
+            tf2::Quaternion q_mech;
+            // Motor feedback defines relative yaw then pitch in odom_omni frame; assume extrinsic yaw (Z) then pitch (Y).
+            q_mech.setRPY(0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
+            q_mech.normalize();
+            q_rel = slerpSafe(q_mech, q_rel, comp_alpha_motor_vs_imu_);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(transform_mutex_);
+            q_odom_omni_to_odom_aim_ = q_rel;
+            has_odom_omni_to_odom_aim_ = true;
+            if (has_fused_odom_omni_to_odom_aim_) {
+                q_odom_omni_to_odom_aim_fused_ =
+                    slerpSafe(q_odom_omni_to_odom_aim_fused_, q_rel, comp_alpha_yaw_aim_);
+            } else {
+                q_odom_omni_to_odom_aim_fused_ = q_rel;
+                has_fused_odom_omni_to_odom_aim_ = true;
+            }
+        }
+
+        geometry_msgs::msg::TransformStamped t;
+        t.header.stamp = stamp;
+        t.header.frame_id = "odom_omni";
+        t.child_frame_id = "odom_aim";
+        t.transform.rotation = tf2::toMsg(q_odom_omni_to_odom_aim_fused_);
+        t.transform.translation.x = 0.0;
+        t.transform.translation.y = 0.0;
+        t.transform.translation.z = 0.0;
+        tf_broadcaster_->sendTransform(t);
     }
 
-    geometry_msgs::msg::TransformStamped t;
-    t.header.stamp = stamp;
-    t.header.frame_id = "odom";
-    t.child_frame_id = "odom_omni";
-    t.transform.rotation = tf2::toMsg(q_odom_to_odom_omni_fused_);
-    t.transform.translation.x = 0.0;
-    t.transform.translation.y = 0.0;
-    t.transform.translation.z = 0.0;
-    tf_broadcaster_->sendTransform(t);
-  }
+    if (has_lidar && has_yaw) {
+        tf2::Quaternion q_rel = lidar_q.inverse() * yaw_q;
+        q_rel.normalize();
+
+        {
+            std::lock_guard<std::mutex> lock(transform_mutex_);
+            q_odom_to_odom_omni_ = q_rel;
+            has_odom_to_odom_omni_ = true;
+            if (has_fused_odom_to_odom_omni_) {
+                q_odom_to_odom_omni_fused_ =
+                    slerpSafe(q_odom_to_odom_omni_fused_, q_rel, comp_alpha_lidar_yaw_);
+            } else {
+                q_odom_to_odom_omni_fused_ = q_rel;
+                has_fused_odom_to_odom_omni_ = true;
+            }
+        }
+
+        geometry_msgs::msg::TransformStamped t;
+        t.header.stamp = stamp;
+        t.header.frame_id = "odom";
+        t.child_frame_id = "odom_omni";
+        t.transform.rotation = tf2::toMsg(q_odom_to_odom_omni_fused_);
+        t.transform.translation.x = 0.0;
+        t.transform.translation.y = 0.0;
+        t.transform.translation.z = 0.0;
+        tf_broadcaster_->sendTransform(t);
+    }
 }
 
 void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg)
@@ -404,135 +421,137 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
         {"", 0},  {"outpost", 0}, {"1", 1},     {"1", 1},    {"2", 2},   {"3", 3},
         {"4", 4}, {"5", 5},       {"guard", 6}, {"base", 7}, {"rune", 8}};
 
-  try {
-    SendAimPacket packet;
+    try {
+        SendAimPacket packet;
 
-    packet.tracking = msg->tracking;
-    packet.id = id_unit8_map.at(msg->id);
-    packet.iffire = msg->iffire;
+        packet.tracking = msg->tracking;
+        packet.id = id_unit8_map.at(msg->id);
+        packet.iffire = msg->iffire;
 
-    tf2::Quaternion target_in_aim;
-    target_in_aim.setRPY(0.0, msg->pitch, msg->yaw);
+        tf2::Quaternion target_in_aim;
+        target_in_aim.setRPY(0.0, msg->pitch, msg->yaw);
 
-    tf2::Quaternion target_in_omni = target_in_aim;
-    bool has_transform = false;
+        tf2::Quaternion target_in_omni = target_in_aim;
+        bool has_transform = false;
 
-    {
-      std::lock_guard<std::mutex> lock(transform_mutex_);
-      has_transform = has_fused_odom_omni_to_odom_aim_;
-      if (has_transform) {
-        target_in_omni = q_odom_omni_to_odom_aim_fused_ * target_in_aim;
-        target_in_omni.normalize();
-      }
-    }
+        {
+            std::lock_guard<std::mutex> lock(transform_mutex_);
+            has_transform = has_fused_odom_omni_to_odom_aim_;
+            if (has_transform) {
+                target_in_omni = q_odom_omni_to_odom_aim_fused_ * target_in_aim;
+                target_in_omni.normalize();
+            }
+        }
 
-    if (!has_transform) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "Transform odom_aim->odom_omni missing, forwarding aim command without frame conversion");
-    }
+        if (!has_transform) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "Transform odom_aim->odom_omni missing, forwarding aim command without frame "
+                "conversion");
+        }
 
-    double roll = 0.0, pitch = 0.0, yaw = 0.0;
-    tf2::Matrix3x3(target_in_omni).getRPY(roll, pitch, yaw);
-    packet.pitch = static_cast<float>(pitch);
-    packet.yaw = static_cast<float>(yaw);
+        double roll = 0.0, pitch = 0.0, yaw = 0.0;
+        tf2::Matrix3x3(target_in_omni).getRPY(roll, pitch, yaw);
+        packet.pitch = static_cast<float>(pitch);
+        packet.yaw = static_cast<float>(yaw);
 
-    crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+        crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
         std::vector<uint8_t> data = toVector(packet);
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    serial_driver_->port()->send(data);
+        std::lock_guard<std::mutex> lock(mutex_);
+        serial_driver_->port()->send(data);
 
-
-    std_msgs::msg::Float64 latency;
-    latency.data = (this->now() - msg->header.stamp).seconds() * 1000.0;
-    RCLCPP_DEBUG_STREAM(get_logger(), "Total latency: " + std::to_string(latency.data) + "ms");
-    latency_pub_->publish(latency);
-  } catch (const std::exception & ex) {
-    RCLCPP_ERROR(get_logger(), "Error while sending auto-aim data: %s", ex.what());
-    reopenPort();
-  }
+        std_msgs::msg::Float64 latency;
+        latency.data = (this->now() - msg->header.stamp).seconds() * 1000.0;
+        RCLCPP_DEBUG_STREAM(get_logger(), "Total latency: " + std::to_string(latency.data) + "ms");
+        latency_pub_->publish(latency);
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(get_logger(), "Error while sending auto-aim data: %s", ex.what());
+        reopenPort();
+    }
 }
 
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
-  
-  try {
-    SendNavPacket packet;
-    bool has_transform = false;
-    tf2::Quaternion q_rel;
+    try {
+        SendNavPacket packet;
+        bool has_transform = false;
+        tf2::Quaternion q_rel;
 
-    {
-      std::lock_guard<std::mutex> lock(transform_mutex_);
-      has_transform = has_fused_odom_to_odom_omni_;
-      q_rel = q_odom_to_odom_omni_fused_;
+        {
+            std::lock_guard<std::mutex> lock(transform_mutex_);
+            has_transform = has_fused_odom_to_odom_omni_;
+            q_rel = q_odom_to_odom_omni_fused_;
+        }
+
+        if (!has_transform) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "Skipping nav send because odom->odom_omni transform is unavailable");
+            return;
+        }
+
+        tf2::Vector3 linear(msg->linear.x, msg->linear.y, msg->linear.z);
+        tf2::Vector3 angular(msg->angular.x, msg->angular.y, msg->angular.z);
+
+        tf2::Vector3 linear_in_omni = tf2::quatRotate(q_rel, linear);
+        tf2::Vector3 angular_in_omni = tf2::quatRotate(q_rel, angular);
+
+        packet.linear_x = static_cast<float>(linear_in_omni.x());
+        packet.linear_y = static_cast<float>(linear_in_omni.y());
+        packet.linear_z = static_cast<float>(linear_in_omni.z());
+
+        packet.angular_x = static_cast<float>(angular_in_omni.x());
+        packet.angular_y = static_cast<float>(angular_in_omni.y());
+        packet.angular_z = static_cast<float>(angular_in_omni.z());
+        std::vector<uint8_t> data = toVector(packet);
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        serial_driver_->port()->send(data);
+        //std::cout<<packet.linear_x<<" "<<packet.linear_y<<" "<<packet.linear_z<<" "<<packet.angular_x<<" "<<packet.angular_y<<" "<<packet.angular_z<<std::endl;
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
+        reopenPort();
     }
-
-    if (!has_transform) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
-        "Skipping nav send because odom->odom_omni transform is unavailable");
-      return;
-    }
-
-    tf2::Vector3 linear(msg->linear.x, msg->linear.y, msg->linear.z);
-    tf2::Vector3 angular(msg->angular.x, msg->angular.y, msg->angular.z);
-
-    tf2::Vector3 linear_in_omni = tf2::quatRotate(q_rel, linear);
-    tf2::Vector3 angular_in_omni = tf2::quatRotate(q_rel, angular);
-
-    packet.linear_x = static_cast<float>(linear_in_omni.x());
-    packet.linear_y = static_cast<float>(linear_in_omni.y());
-    packet.linear_z = static_cast<float>(linear_in_omni.z());
-
-    packet.angular_x = static_cast<float>(angular_in_omni.x());
-    packet.angular_y = static_cast<float>(angular_in_omni.y());
-    packet.angular_z = static_cast<float>(angular_in_omni.z());
-    std::vector<uint8_t> data = toVector(packet);
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    serial_driver_->port()->send(data);
-    //std::cout<<packet.linear_x<<" "<<packet.linear_y<<" "<<packet.linear_z<<" "<<packet.angular_x<<" "<<packet.angular_y<<" "<<packet.angular_z<<std::endl;
-  } catch (const std::exception & ex) {
-    RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
-    reopenPort();
-  }
 }
 
 void RMSerialDriver::setDecisionCallback(
     const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
     std::shared_ptr<std_srvs::srv::SetBool::Response> response)
 {
-  try {
-    SendDecisionPacket packet;
-    packet.ifreload = request->data;
+    try {
+        SendDecisionPacket packet;
+        packet.ifreload = request->data;
 
-    crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+        crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
-    std::vector<uint8_t> data = toVector(packet);
+        std::vector<uint8_t> data = toVector(packet);
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    serial_driver_->port()->send(data);
-    std::cout<<"whether to enter outpost attack:"<<packet.ifreload<<std::endl;
-    response->success = true;
-    
-  } catch (const std::exception & ex) {
-    RCLCPP_ERROR(get_logger(), "Error while sending decision data: %s", ex.what());
-    response->success = false;
-    reopenPort();
-  }
-} 
+        std::lock_guard<std::mutex> lock(mutex_);
+        serial_driver_->port()->send(data);
+        std::cout << "whether to enter outpost attack:" << packet.ifreload << std::endl;
+        response->success = true;
 
-tf2::Quaternion RMSerialDriver::slerpSafe(const tf2::Quaternion & from, const tf2::Quaternion & to, double alpha)
+    } catch (const std::exception & ex) {
+        RCLCPP_ERROR(get_logger(), "Error while sending decision data: %s", ex.what());
+        response->success = false;
+        reopenPort();
+    }
+}
+
+tf2::Quaternion RMSerialDriver::slerpSafe(
+    const tf2::Quaternion & from, const tf2::Quaternion & to, double alpha)
 {
-  double a = std::clamp(alpha, 0.0, 1.0);
-  // tf2::slerp handles normalization internally; ensure inputs are normalized.
-  tf2::Quaternion f = from; f.normalize();
-  tf2::Quaternion t = to; t.normalize();
-  tf2::Quaternion r = tf2::slerp(f, t, a);
-  r.normalize();
-  return r;
+    double a = std::clamp(alpha, 0.0, 1.0);
+    // tf2::slerp handles normalization internally; ensure inputs are normalized.
+    tf2::Quaternion f = from;
+    f.normalize();
+    tf2::Quaternion t = to;
+    t.normalize();
+    tf2::Quaternion r = tf2::slerp(f, t, a);
+    r.normalize();
+    return r;
 }
 
 void RMSerialDriver::getParams()
@@ -637,7 +656,7 @@ void RMSerialDriver::reopenPort()
 void RMSerialDriver::setParam(const rclcpp::Parameter & param)
 {
     if (!detector_param_client_->service_is_ready()) {
-        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set (main)");
+        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
         return;
     }
 
@@ -655,49 +674,6 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
                 }
                 RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
                 initial_set_param_ = true;
-            });
-    }
-
-    if (has_wide_cam_) {
-        if (!detector_param_client_wide_->service_is_ready()) {
-            RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set (wide)");
-        } else {
-            set_param_future_wide_ = detector_param_client_wide_->set_parameters(
-                {param}, [this, param](const ResultFuturePtr & results) {
-                    for (const auto & result : results.get()) {
-                        if (!result.successful) {
-                            RCLCPP_ERROR(get_logger(), "Failed to set wide parameter: %s", result.reason.c_str());
-                            return;
-                        }
-                    }
-                    RCLCPP_INFO(get_logger(), "Successfully set wide detect_color to %ld!", param.as_int());
-                });
-        }
-    }
-}
-
-void RMSerialDriver::setRuneParam(const rclcpp::Parameter & param)
-{
-    if (!rune_detector_param_client_->service_is_ready()) {
-        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
-        return;
-    }
-
-    if (!set_rune_param_future_.valid() ||
-        set_rune_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        RCLCPP_INFO(get_logger(), "Setting rune_detect_color to %ld...", param.as_int());
-        set_rune_param_future_ = rune_detector_param_client_->set_parameters(
-            {param}, [this, param](const ResultFuturePtr & results) {
-                for (const auto & result : results.get()) {
-                    if (!result.successful) {
-                        RCLCPP_ERROR(
-                            get_logger(), "Failed to set parameter: %s", result.reason.c_str());
-                        return;
-                    }
-                }
-                RCLCPP_INFO(
-                    get_logger(), "Successfully set rune_detect_color to %ld!", param.as_int());
-                initial_set_rune_param_ = true;
             });
     }
 }
@@ -748,8 +724,7 @@ bool RMSerialDriver::setRuneMode(uint8_t mode)
 bool RMSerialDriver::setCarMode(uint8_t mode)
 {
     if (!set_car_tracker_mode_client_->service_is_ready() ||
-        !set_car_detector_mode_client_->service_is_ready()||
-        (has_wide_cam_ && !set_car_detector_mode_client_wide_->service_is_ready())) {
+        !set_car_detector_mode_client_->service_is_ready()) {
         RCLCPP_WARN(get_logger(), "Service not ready, skipping set car mode");
         return 0;
     }
@@ -759,26 +734,11 @@ bool RMSerialDriver::setCarMode(uint8_t mode)
 
     auto result_tracker_future = set_car_tracker_mode_client_->async_send_request(request);
     auto result_detector_future = set_car_detector_mode_client_->async_send_request(request);
-    
-    rclcpp::Client<auto_aim_interfaces::srv::SetMode>::SharedFuture result_detector_future_wide;
-    if(has_wide_cam_){
-        result_detector_future_wide = set_car_detector_mode_client_wide_->async_send_request(request).future.share();
-    }
 
     try {
         auto result1 = result_tracker_future.get();
         auto result2 = result_detector_future.get();
-        
-        bool result3_success = true;
-        std::string result3_message = "";
-        
-        if(has_wide_cam_){
-            auto result3 = result_detector_future_wide.get();
-            result3_success = result3->success;
-            result3_message = result3->message;
-        }
-
-        if (result1->success && result2->success && result3_success) {
+        if (result1->success && result2->success) {
             RCLCPP_INFO(get_logger(), "Successfully set car mode to %d", mode);
             return true;
         } else {
