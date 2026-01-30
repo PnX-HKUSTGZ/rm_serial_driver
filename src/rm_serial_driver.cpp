@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <cmath>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 #include <rclcpp/utilities.hpp>
@@ -47,6 +48,11 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     comp_alpha_lidar_yaw_ = this->declare_parameter("comp_alpha_lidar_yaw", 0.2);
     comp_alpha_motor_vs_imu_ = this->declare_parameter("comp_alpha_motor_vs_imu", 0.7);
     pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true);
+    use_dual_yaw_split_ = this->declare_parameter("use_dual_yaw_split", false);
+    double dual_yaw_limit_deg = this->declare_parameter("dual_yaw_limit_deg", 60.0);
+    dual_yaw_limit_deg = std::clamp(dual_yaw_limit_deg, 1.0, 179.0);
+    dual_yaw_limit_rad_ = dual_yaw_limit_deg * M_PI / 180.0;
+    dual_yaw_center_ratio_ = std::clamp(this->declare_parameter("dual_yaw_center_ratio", 0.3), 0.0, 1.0);
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -434,12 +440,36 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
         tf2::Quaternion target_in_omni = target_in_aim;
         bool has_transform = false;
 
+        auto wrapAngle = [](double ang) {
+            double v = std::fmod(ang + M_PI, 2.0 * M_PI);
+            if (v < 0) v += 2.0 * M_PI;
+            return v - M_PI;
+        };
+
+        double big_yaw_now = 0.0;
+        double small_yaw_now = 0.0;
+        bool has_big_yaw = false;
+        bool has_small_yaw = false;
+
         {
             std::lock_guard<std::mutex> lock(transform_mutex_);
             has_transform = has_fused_odom_omni_to_odom_aim_;
             if (has_transform) {
                 target_in_omni = q_odom_omni_to_odom_aim_fused_ * target_in_aim;
                 target_in_omni.normalize();
+            }
+
+            if (has_yaw_imu_) {
+                double r = 0.0, p = 0.0, y = 0.0;
+                tf2::Matrix3x3(yaw_imu_q_).getRPY(r, p, y);
+                big_yaw_now = wrapAngle(y);
+                has_big_yaw = true;
+            }
+
+            if (has_motor_feedback_) {
+                small_yaw_now = static_cast<double>(motor_yaw_);
+                small_yaw_now = wrapAngle(small_yaw_now);
+                has_small_yaw = true;
             }
         }
 
@@ -453,7 +483,43 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
         double roll = 0.0, pitch = 0.0, yaw = 0.0;
         tf2::Matrix3x3(target_in_omni).getRPY(roll, pitch, yaw);
         packet.pitch = static_cast<float>(pitch);
-        packet.yaw = static_cast<float>(yaw);
+
+        double yaw_cmd = yaw;
+        double big_yaw_cmd = yaw;
+        double small_yaw_cmd = yaw;
+
+        if (use_dual_yaw_split_ && has_big_yaw) {
+            double err = wrapAngle(yaw - big_yaw_now);
+
+            if (std::abs(err) > dual_yaw_limit_rad_) {
+                // Large error: let big yaw eat the portion beyond the limit, keep small yaw at the limit.
+                const double sign = (err > 0.0) ? 1.0 : -1.0;
+                small_yaw_cmd = sign * dual_yaw_limit_rad_;
+                const double big_delta = err - small_yaw_cmd;
+                big_yaw_cmd = wrapAngle(big_yaw_now + big_delta);
+            } else {
+                // Within limit: bleed a portion back to big yaw to recenter small yaw gradually.
+                const double recenter_term = has_small_yaw ? small_yaw_now * dual_yaw_center_ratio_ : 0.0;
+                small_yaw_cmd = wrapAngle(err - recenter_term);
+                small_yaw_cmd = std::clamp(small_yaw_cmd, -dual_yaw_limit_rad_, dual_yaw_limit_rad_);
+                big_yaw_cmd = wrapAngle(yaw - small_yaw_cmd);
+            }
+
+            yaw_cmd = small_yaw_cmd;
+        } else {
+            big_yaw_cmd = wrapAngle(yaw_cmd);
+            small_yaw_cmd = wrapAngle(yaw_cmd - big_yaw_cmd);
+        }
+
+        packet.big_yaw = static_cast<float>(big_yaw_cmd);
+        packet.small_yaw = static_cast<float>(yaw_cmd);
+
+        if (use_dual_yaw_split_) {
+            RCLCPP_DEBUG_THROTTLE(
+                get_logger(), *get_clock(), 1000,
+                "dual-yaw split: target=%.3f big=%.3f small=%.3f err_limit=%.2fdeg",
+                yaw, big_yaw_cmd, yaw_cmd, dual_yaw_limit_rad_ * 180.0 / M_PI);
+        }
 
         crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 

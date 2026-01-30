@@ -13,6 +13,7 @@
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/subscription.hpp>
+#include <cmath>
 #include <serial_driver/serial_driver.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
@@ -142,6 +143,11 @@ private:
     double comp_alpha_lidar_yaw_ = 0.2;
     double comp_alpha_motor_vs_imu_ = 0.7;
     bool pitch_imu_enabled_ = true;
+
+    // Dual-yaw allocation (big yaw + small yaw)
+    bool use_dual_yaw_split_ = false;
+    double dual_yaw_limit_rad_ = 3.14159265358979323846 / 3.0;       // 60 deg default limit
+    double dual_yaw_center_ratio_ = 0.3;           // aggressiveness of small-yaw recentering
 
     std::mutex transform_mutex_;
 

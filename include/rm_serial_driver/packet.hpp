@@ -39,20 +39,15 @@ struct SendAimPacket
     uint8_t reserved : 2;
 
     float pitch;
-    float yaw;
-    float pitch_acc;
-    float pitch_vel;
-    float yaw_acc;
-    float yaw_vel;
-    float x;
-    float y;
+    float big_yaw;     // outer (heavy) yaw
+    float small_yaw;   // inner (light) yaw
 
     uint16_t checksum = 0;
 } __attribute__((packed));
 
 struct SendNavPacket
 {
-  uint8_t header = 0xA6;  // Packet header, fixed value 0xA5
+  uint8_t header = 0xA6;  // Packet header, fixed value 0xA6
 
   // Linear velocities
   float linear_x;
