@@ -166,6 +166,11 @@ void RMSerialDriver::receiveData()
                     tf2::Quaternion yaw_q(
                         packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2],
                         packet.yaw_imu_q[3]);
+                    {
+                        double roll, pitch, yaw;
+                        tf2::Matrix3x3(yaw_q).getRPY(roll, pitch, yaw);
+                        yaw_q.setRPY(-roll, -pitch, yaw);
+                    }
                     tf2::Quaternion aim_q(
                         packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2],
                         packet.aim_imu_q[3]);
