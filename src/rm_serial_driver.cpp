@@ -576,6 +576,9 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
         packet.angular_x = static_cast<float>(angular_in_omni.x());
         packet.angular_y = static_cast<float>(angular_in_omni.y());
         packet.angular_z = static_cast<float>(angular_in_omni.z());
+
+        crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+
         std::vector<uint8_t> data = toVector(packet);
 
         std::lock_guard<std::mutex> lock(mutex_);
