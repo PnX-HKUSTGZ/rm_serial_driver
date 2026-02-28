@@ -53,6 +53,13 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     dual_yaw_limit_deg = std::clamp(dual_yaw_limit_deg, 1.0, 179.0);
     dual_yaw_limit_rad_ = dual_yaw_limit_deg * M_PI / 180.0;
     dual_yaw_center_ratio_ = std::clamp(this->declare_parameter("dual_yaw_center_ratio", 0.3), 0.0, 1.0);
+    follow_mark_timeout_sec_ = std::max(0.0, this->declare_parameter("follow_mark_timeout_sec", 0.5));
+    nav_packet_version_ = this->declare_parameter("nav_packet_version", 1);
+    if (nav_packet_version_ != 1 && nav_packet_version_ != 2) {
+        RCLCPP_WARN(
+            get_logger(), "Invalid nav_packet_version=%d, fallback to v1", nav_packet_version_);
+        nav_packet_version_ = 1;
+    }
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -126,6 +133,10 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
         std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
+
+    follow_mark_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
+        "/chassis/follow_mark", rclcpp::QoS(rclcpp::KeepLast(1)),
+        std::bind(&RMSerialDriver::followMarkCallback, this, std::placeholders::_1));
 }
 
 RMSerialDriver::~RMSerialDriver()
@@ -546,7 +557,6 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
     try {
-        SendNavPacket packet;
         bool has_transform = false;
         tf2::Quaternion q_rel;
 
@@ -569,24 +579,81 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
         tf2::Vector3 linear_in_omni = tf2::quatRotate(q_rel, linear);
         tf2::Vector3 angular_in_omni = tf2::quatRotate(q_rel, angular);
 
-        packet.linear_x = static_cast<float>(linear_in_omni.x());
-        packet.linear_y = static_cast<float>(linear_in_omni.y());
-        packet.linear_z = static_cast<float>(linear_in_omni.z());
+        const float linear_x = static_cast<float>(linear_in_omni.x());
+        const float linear_y = static_cast<float>(linear_in_omni.y());
+        const float linear_z = static_cast<float>(linear_in_omni.z());
+        const float angular_x = static_cast<float>(angular_in_omni.x());
+        const float angular_y = static_cast<float>(angular_in_omni.y());
+        const float angular_z = static_cast<float>(angular_in_omni.z());
 
-        packet.angular_x = static_cast<float>(angular_in_omni.x());
-        packet.angular_y = static_cast<float>(angular_in_omni.y());
-        packet.angular_z = static_cast<float>(angular_in_omni.z());
+        if (nav_packet_version_ == 2) {
+            uint8_t follow_mark = 0;
+            bool follow_mark_fresh = false;
+            const rclcpp::Time now = this->now();
+            {
+                std::lock_guard<std::mutex> lock(follow_mark_mutex_);
+                if (has_follow_mark_) {
+                    const double age_sec = (now - latest_follow_mark_stamp_).seconds();
+                    if (age_sec <= follow_mark_timeout_sec_) {
+                        follow_mark = latest_follow_mark_;
+                        follow_mark_fresh = true;
+                    }
+                }
+            }
 
-        crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+            if (!follow_mark_fresh) {
+                follow_mark = 0;
+                RCLCPP_DEBUG_THROTTLE(
+                    get_logger(), *get_clock(), 2000,
+                    "follow_mark unavailable or timeout (%.3fs), fallback to 0",
+                    follow_mark_timeout_sec_);
+            }
 
-        std::vector<uint8_t> data = toVector(packet);
+            SendNavPacketV2 packet;
+            packet.linear_x = linear_x;
+            packet.linear_y = linear_y;
+            packet.linear_z = linear_z;
+            packet.angular_x = angular_x;
+            packet.angular_y = angular_y;
+            packet.angular_z = angular_z;
+            packet.follow_mark = follow_mark;
 
-        std::lock_guard<std::mutex> lock(mutex_);
-        serial_driver_->port()->send(data);
-        //std::cout<<packet.linear_x<<" "<<packet.linear_y<<" "<<packet.linear_z<<" "<<packet.angular_x<<" "<<packet.angular_y<<" "<<packet.angular_z<<std::endl;
+            crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+
+            std::vector<uint8_t> data = toVector(packet);
+            std::lock_guard<std::mutex> lock(mutex_);
+            serial_driver_->port()->send(data);
+        } else {
+            SendNavPacket packet;
+            packet.linear_x = linear_x;
+            packet.linear_y = linear_y;
+            packet.linear_z = linear_z;
+            packet.angular_x = angular_x;
+            packet.angular_y = angular_y;
+            packet.angular_z = angular_z;
+
+            crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+
+            std::vector<uint8_t> data = toVector(packet);
+            std::lock_guard<std::mutex> lock(mutex_);
+            serial_driver_->port()->send(data);
+        }
     } catch (const std::exception & ex) {
         RCLCPP_ERROR(get_logger(), "Error while sending nav data: %s", ex.what());
         reopenPort();
+    }
+}
+
+void RMSerialDriver::followMarkCallback(const std_msgs::msg::UInt8::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lock(follow_mark_mutex_);
+    if (msg) {
+        latest_follow_mark_ = msg->data;
+        has_follow_mark_ = true;
+        latest_follow_mark_stamp_ = this->now();
+    } else {
+        latest_follow_mark_ = 0;
+        has_follow_mark_ = false;
     }
 }
 

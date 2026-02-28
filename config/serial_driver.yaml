@@ -5,4 +5,5 @@
     flow_control: none
     parity: none
     stop_bits: "1"
-
+    nav_packet_version: 2
+    follow_mark_timeout_sec: 0.5

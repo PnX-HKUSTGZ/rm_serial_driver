@@ -5,11 +5,14 @@
 #define RM_SERIAL_DRIVER__PACKET_HPP_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
 namespace rm_serial_driver
 {
+#pragma pack(push, 1)
+
 struct ReceivePacket
 {
   uint8_t header = 0x5A;
@@ -28,7 +31,7 @@ struct ReceivePacket
   float motor_yaw;     // small yaw motor feedback (rad)
   float motor_pitch;   // pitch motor feedback (rad)
   uint16_t checksum = 0;
-} __attribute__((packed));
+};
 
 struct SendAimPacket
 {
@@ -43,7 +46,7 @@ struct SendAimPacket
     float small_yaw;   // inner (light) yaw
 
     uint16_t checksum = 0;
-} __attribute__((packed));
+};
 
 struct SendNavPacket
 {
@@ -60,7 +63,30 @@ struct SendNavPacket
   float angular_z;
 
   uint16_t checksum = 0;  // Checksum for error detection
-} __attribute__((packed));
+};
+
+struct SendNavPacketV2
+{
+  uint8_t header = 0xA6;  // Packet header, fixed value 0xA6
+
+  // Linear velocities
+  float linear_x;
+  float linear_y;
+  float linear_z;
+
+  // Angular velocities
+  float angular_x;
+  float angular_y;
+  float angular_z;
+
+  uint8_t follow_mark = 0;  // Follow-mark status from /chassis/follow_mark
+  uint16_t checksum = 0;    // Checksum for error detection
+};
+
+constexpr std::size_t kSendNavPacketV2ExpectedSize = 28U;
+static_assert(
+  sizeof(SendNavPacketV2) == kSendNavPacketV2ExpectedSize,
+  "SendNavPacketV2 layout mismatch");
 
 
 struct SendDecisionPacket
@@ -71,7 +97,9 @@ struct SendDecisionPacket
   uint8_t ifreload;
 
   uint16_t checksum = 0;  // Checksum for error detection
-} __attribute__((packed));
+};
+
+#pragma pack(pop)
 
 inline ReceivePacket fromVector(const std::vector<uint8_t> & data)
 {

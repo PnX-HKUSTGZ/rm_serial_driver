@@ -19,6 +19,7 @@
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/u_int16.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -54,6 +55,7 @@ private:
     void aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg);
 
     void navCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+    void followMarkCallback(const std_msgs::msg::UInt8::SharedPtr msg);
 
     void updateOdomTransforms();
 
@@ -114,6 +116,7 @@ private:
 
     rclcpp::Subscription<auto_aim_interfaces::msg::Firecontrol>::SharedPtr target_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr nav_sub_;
+    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr follow_mark_sub_;
 
     tf2::Quaternion yaw_imu_q_{0, 0, 0, 1};
     tf2::Quaternion aim_imu_q_{0, 0, 0, 1};
@@ -150,6 +153,13 @@ private:
     double dual_yaw_center_ratio_ = 0.3;           // aggressiveness of small-yaw recentering
 
     std::mutex transform_mutex_;
+
+    std::mutex follow_mark_mutex_;
+    uint8_t latest_follow_mark_ = 0;
+    rclcpp::Time latest_follow_mark_stamp_;
+    bool has_follow_mark_ = false;
+    double follow_mark_timeout_sec_ = 0.5;
+    int nav_packet_version_ = 1;
 
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
