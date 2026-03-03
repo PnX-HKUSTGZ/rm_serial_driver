@@ -68,7 +68,7 @@ struct SendNavPacket
 struct SendNavPacketV2
 {
   uint8_t header = 0xA6;  // Packet header, fixed value 0xA6
-
+  uint8_t follow_mark = 1;  // Follow-mark status from /chassis/follow_mark
   // Linear velocities
   float linear_x;
   float linear_y;
@@ -79,7 +79,6 @@ struct SendNavPacketV2
   float angular_y;
   float angular_z;
 
-  uint8_t follow_mark = 0;  // Follow-mark status from /chassis/follow_mark
   uint16_t checksum = 0;    // Checksum for error detection
 };
 

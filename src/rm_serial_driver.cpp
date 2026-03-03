@@ -134,8 +134,9 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
         "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
         std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
 
+    const auto follow_mark_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
     follow_mark_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
-        "/chassis/follow_mark", rclcpp::QoS(rclcpp::KeepLast(1)),
+        "/chassis/follow_mark", follow_mark_qos,
         std::bind(&RMSerialDriver::followMarkCallback, this, std::placeholders::_1));
 }
 
@@ -587,7 +588,7 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
         const float angular_z = static_cast<float>(angular_in_omni.z());
 
         if (nav_packet_version_ == 2) {
-            uint8_t follow_mark = 0;
+            uint8_t follow_mark = 1;
             bool follow_mark_fresh = false;
             const rclcpp::Time now = this->now();
             {
@@ -602,10 +603,10 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
             }
 
             if (!follow_mark_fresh) {
-                follow_mark = 0;
+                follow_mark = 1;
                 RCLCPP_DEBUG_THROTTLE(
                     get_logger(), *get_clock(), 2000,
-                    "follow_mark unavailable or timeout (%.3fs), fallback to 0",
+                    "follow_mark unavailable or timeout (%.3fs), fallback to 1",
                     follow_mark_timeout_sec_);
             }
 
@@ -648,11 +649,18 @@ void RMSerialDriver::followMarkCallback(const std_msgs::msg::UInt8::SharedPtr ms
 {
     std::lock_guard<std::mutex> lock(follow_mark_mutex_);
     if (msg) {
-        latest_follow_mark_ = msg->data;
+        if (msg->data <= 1U) {
+            latest_follow_mark_ = msg->data;
+        } else {
+            latest_follow_mark_ = 1U;
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "follow_mark=%u is invalid, fallback to 1", msg->data);
+        }
         has_follow_mark_ = true;
         latest_follow_mark_stamp_ = this->now();
     } else {
-        latest_follow_mark_ = 0;
+        latest_follow_mark_ = 1;
         has_follow_mark_ = false;
     }
 }

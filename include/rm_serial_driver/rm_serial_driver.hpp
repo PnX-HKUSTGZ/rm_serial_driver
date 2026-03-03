@@ -155,7 +155,7 @@ private:
     std::mutex transform_mutex_;
 
     std::mutex follow_mark_mutex_;
-    uint8_t latest_follow_mark_ = 0;
+    uint8_t latest_follow_mark_ = 1;
     rclcpp::Time latest_follow_mark_stamp_;
     bool has_follow_mark_ = false;
     double follow_mark_timeout_sec_ = 0.5;
