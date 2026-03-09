@@ -33,6 +33,65 @@
 
 namespace rm_serial_driver
 {
+namespace
+{
+constexpr double kQuaternionNorm2Min = 1e-12;
+
+bool sanitizeQuaternion(
+    tf2::Quaternion & q, const rclcpp::Logger & logger, rclcpp::Clock & clock,
+    const char * context)
+{
+    const double x = q.x();
+    const double y = q.y();
+    const double z = q.z();
+    const double w = q.w();
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w)) {
+        RCLCPP_WARN_THROTTLE(
+            logger, clock, 2000,
+            "Skip invalid quaternion at %s (non-finite): [%.6f, %.6f, %.6f, %.6f]", context, x,
+            y, z, w);
+        return false;
+    }
+
+    const double norm2 = (x * x) + (y * y) + (z * z) + (w * w);
+    if (!std::isfinite(norm2) || norm2 <= kQuaternionNorm2Min) {
+        RCLCPP_WARN_THROTTLE(
+            logger, clock, 2000,
+            "Skip invalid quaternion at %s (bad norm2=%.6e): [%.6f, %.6f, %.6f, %.6f]", context,
+            norm2, x, y, z, w);
+        return false;
+    }
+
+    q.normalize();
+    if (!std::isfinite(q.x()) || !std::isfinite(q.y()) || !std::isfinite(q.z()) ||
+        !std::isfinite(q.w())) {
+        RCLCPP_WARN_THROTTLE(
+            logger, clock, 2000,
+            "Skip invalid quaternion at %s (non-finite after normalize): [%.6f, %.6f, %.6f, "
+            "%.6f]",
+            context, q.x(), q.y(), q.z(), q.w());
+        return false;
+    }
+
+    return true;
+}
+
+bool sendTransformIfQuaternionValid(
+    tf2_ros::TransformBroadcaster & broadcaster, geometry_msgs::msg::TransformStamped & transform,
+    const rclcpp::Logger & logger, rclcpp::Clock & clock, const char * context)
+{
+    tf2::Quaternion q(
+        transform.transform.rotation.x, transform.transform.rotation.y,
+        transform.transform.rotation.z, transform.transform.rotation.w);
+    if (!sanitizeQuaternion(q, logger, clock, context)) {
+        return false;
+    }
+    transform.transform.rotation = tf2::toMsg(q);
+    broadcaster.sendTransform(transform);
+    return true;
+}
+}  // namespace
+
 RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 : Node("rm_serial_driver", options),
   owned_ctx_{new IoContext(2)},
@@ -178,30 +237,48 @@ void RMSerialDriver::receiveData()
                     tf2::Quaternion yaw_q(
                         packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2],
                         packet.yaw_imu_q[3]);
+                    if (!sanitizeQuaternion(
+                            yaw_q, get_logger(), *get_clock(), "receiveData:packet.yaw_imu_q")) {
+                        continue;
+                    }
                     {
                         double roll, pitch, yaw;
                         tf2::Matrix3x3(yaw_q).getRPY(roll, pitch, yaw);
                         yaw_q.setRPY(-roll, -pitch, yaw);
                     }
-                    tf2::Quaternion aim_q(
-                        packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2],
-                        packet.aim_imu_q[3]);
-                    yaw_q.normalize();
+                    if (!sanitizeQuaternion(
+                            yaw_q, get_logger(), *get_clock(), "receiveData:yaw_q_converted")) {
+                        continue;
+                    }
+
+                    tf2::Quaternion aim_q(0.0, 0.0, 0.0, 1.0);
 
                     float motor_yaw = packet.motor_yaw;
                     float motor_pitch =
                         -packet.motor_pitch;  // 电机编码器的正负和轴系的正负是相反的
 
                     if (pitch_imu_enabled_) {
-                        aim_q.normalize();
+                        aim_q = tf2::Quaternion(
+                            packet.aim_imu_q[0], packet.aim_imu_q[1], packet.aim_imu_q[2],
+                            packet.aim_imu_q[3]);
+                        if (!sanitizeQuaternion(
+                                aim_q, get_logger(), *get_clock(), "receiveData:packet.aim_imu_q")) {
+                            continue;
+                        }
                     } else {
                         // When pitch IMU is absent, derive aim orientation from yaw IMU plus motor feedback.
                         tf2::Quaternion q_mech;
                         q_mech.setRPY(
                             0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
-                        q_mech.normalize();
+                        if (!sanitizeQuaternion(
+                                q_mech, get_logger(), *get_clock(), "receiveData:motor_feedback_q")) {
+                            continue;
+                        }
                         aim_q = yaw_q * q_mech;
-                        aim_q.normalize();
+                        if (!sanitizeQuaternion(
+                                aim_q, get_logger(), *get_clock(), "receiveData:aim_q_from_motor")) {
+                            continue;
+                        }
                     }
 
                     {
@@ -235,7 +312,9 @@ void RMSerialDriver::receiveData()
                     t_omni.transform.translation.x = 0.0;
                     t_omni.transform.translation.y = 0.0;
                     t_omni.transform.translation.z = 0.0;
-                    tf_broadcaster_->sendTransform(t_omni);
+                    sendTransformIfQuaternionValid(
+                        *tf_broadcaster_, t_omni, get_logger(), *get_clock(),
+                        "receiveData:odom_omni->omni_gimbal_link");
 
                     geometry_msgs::msg::TransformStamped t;
                     timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
@@ -245,10 +324,12 @@ void RMSerialDriver::receiveData()
                     t.child_frame_id = "gimbal_link";
                     q_rot.setRPY(0, 0, 0);
                     t.transform.rotation = tf2::toMsg(aim_q * q_rot);
-                    t_omni.transform.translation.x = 0.0;
-                    t_omni.transform.translation.y = 0.0;
-                    t_omni.transform.translation.z = 0.0;
-                    tf_broadcaster_->sendTransform(t);
+                    t.transform.translation.x = 0.0;
+                    t.transform.translation.y = 0.0;
+                    t.transform.translation.z = 0.0;
+                    sendTransformIfQuaternionValid(
+                        *tf_broadcaster_, t, get_logger(), *get_clock(),
+                        "receiveData:odom_aim->gimbal_link");
 
                     //publish game info
                     std_msgs::msg::UInt16 sentryHP;
@@ -320,11 +401,13 @@ void RMSerialDriver::updateOdomTransforms()
         tf2::Quaternion lidar_q(
             lidar_tf.transform.rotation.x, lidar_tf.transform.rotation.y,
             lidar_tf.transform.rotation.z, lidar_tf.transform.rotation.w);
-        lidar_q.normalize();
-        std::lock_guard<std::mutex> lock(transform_mutex_);
-        lidar_imu_q_ = lidar_q;
-        lidar_imu_stamp_ = lidar_tf.header.stamp;
-        has_lidar_imu_ = true;
+        if (sanitizeQuaternion(
+                lidar_q, get_logger(), *get_clock(), "updateOdomTransforms:odom->base_link")) {
+            std::lock_guard<std::mutex> lock(transform_mutex_);
+            lidar_imu_q_ = lidar_q;
+            lidar_imu_stamp_ = lidar_tf.header.stamp;
+            has_lidar_imu_ = true;
+        }
     }
 
     tf2::Quaternion yaw_q;
@@ -350,6 +433,19 @@ void RMSerialDriver::updateOdomTransforms()
         has_motor = has_motor_feedback_;
     }
 
+    if (has_yaw &&
+        !sanitizeQuaternion(yaw_q, get_logger(), *get_clock(), "updateOdomTransforms:yaw_imu_q_")) {
+        has_yaw = false;
+    }
+    if (has_aim &&
+        !sanitizeQuaternion(aim_q, get_logger(), *get_clock(), "updateOdomTransforms:aim_imu_q_")) {
+        has_aim = false;
+    }
+    if (has_lidar && !sanitizeQuaternion(
+                         lidar_q, get_logger(), *get_clock(), "updateOdomTransforms:lidar_imu_q_")) {
+        has_lidar = false;
+    }
+
     const rclcpp::Time stamp = this->now();
 
     if (!pitch_imu_enabled_) {
@@ -371,70 +467,88 @@ void RMSerialDriver::updateOdomTransforms()
             t.transform.translation.x = 0.0;
             t.transform.translation.y = 0.0;
             t.transform.translation.z = 0.0;
-            tf_broadcaster_->sendTransform(t);
+            sendTransformIfQuaternionValid(
+                *tf_broadcaster_, t, get_logger(), *get_clock(),
+                "updateOdomTransforms:odom_omni->odom_aim(identity)");
         }
     } else if (has_yaw && has_aim) {
         tf2::Quaternion q_rel = yaw_q.inverse() * aim_q;
-        q_rel.normalize();
+        if (sanitizeQuaternion(
+                q_rel, get_logger(), *get_clock(),
+                "updateOdomTransforms:q_odom_omni_to_odom_aim_raw")) {
+            if (has_motor) {
+                tf2::Quaternion q_mech;
+                // Motor feedback defines relative yaw then pitch in odom_omni frame; assume extrinsic yaw (Z) then pitch (Y).
+                q_mech.setRPY(
+                    0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
+                if (sanitizeQuaternion(
+                        q_mech, get_logger(), *get_clock(),
+                        "updateOdomTransforms:motor_feedback_relative_q")) {
+                    q_rel = slerpSafe(q_mech, q_rel, comp_alpha_motor_vs_imu_);
+                }
+            }
 
-        if (has_motor) {
-            tf2::Quaternion q_mech;
-            // Motor feedback defines relative yaw then pitch in odom_omni frame; assume extrinsic yaw (Z) then pitch (Y).
-            q_mech.setRPY(0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
-            q_mech.normalize();
-            q_rel = slerpSafe(q_mech, q_rel, comp_alpha_motor_vs_imu_);
-        }
+            if (sanitizeQuaternion(
+                    q_rel, get_logger(), *get_clock(),
+                    "updateOdomTransforms:q_odom_omni_to_odom_aim_fused_input")) {
+                {
+                    std::lock_guard<std::mutex> lock(transform_mutex_);
+                    q_odom_omni_to_odom_aim_ = q_rel;
+                    has_odom_omni_to_odom_aim_ = true;
+                    if (has_fused_odom_omni_to_odom_aim_) {
+                        q_odom_omni_to_odom_aim_fused_ =
+                            slerpSafe(q_odom_omni_to_odom_aim_fused_, q_rel, comp_alpha_yaw_aim_);
+                    } else {
+                        q_odom_omni_to_odom_aim_fused_ = q_rel;
+                        has_fused_odom_omni_to_odom_aim_ = true;
+                    }
+                }
 
-        {
-            std::lock_guard<std::mutex> lock(transform_mutex_);
-            q_odom_omni_to_odom_aim_ = q_rel;
-            has_odom_omni_to_odom_aim_ = true;
-            if (has_fused_odom_omni_to_odom_aim_) {
-                q_odom_omni_to_odom_aim_fused_ =
-                    slerpSafe(q_odom_omni_to_odom_aim_fused_, q_rel, comp_alpha_yaw_aim_);
-            } else {
-                q_odom_omni_to_odom_aim_fused_ = q_rel;
-                has_fused_odom_omni_to_odom_aim_ = true;
+                geometry_msgs::msg::TransformStamped t;
+                t.header.stamp = stamp;
+                t.header.frame_id = "odom_omni";
+                t.child_frame_id = "odom_aim";
+                t.transform.rotation = tf2::toMsg(q_odom_omni_to_odom_aim_fused_);
+                t.transform.translation.x = 0.0;
+                t.transform.translation.y = 0.0;
+                t.transform.translation.z = 0.0;
+                sendTransformIfQuaternionValid(
+                    *tf_broadcaster_, t, get_logger(), *get_clock(),
+                    "updateOdomTransforms:odom_omni->odom_aim");
             }
         }
-
-        geometry_msgs::msg::TransformStamped t;
-        t.header.stamp = stamp;
-        t.header.frame_id = "odom_omni";
-        t.child_frame_id = "odom_aim";
-        t.transform.rotation = tf2::toMsg(q_odom_omni_to_odom_aim_fused_);
-        t.transform.translation.x = 0.0;
-        t.transform.translation.y = 0.0;
-        t.transform.translation.z = 0.0;
-        tf_broadcaster_->sendTransform(t);
     }
 
     if (has_lidar && has_yaw) {
         tf2::Quaternion q_rel = lidar_q.inverse() * yaw_q;
-        q_rel.normalize();
-
-        {
-            std::lock_guard<std::mutex> lock(transform_mutex_);
-            q_odom_to_odom_omni_ = q_rel;
-            has_odom_to_odom_omni_ = true;
-            if (has_fused_odom_to_odom_omni_) {
-                q_odom_to_odom_omni_fused_ =
-                    slerpSafe(q_odom_to_odom_omni_fused_, q_rel, comp_alpha_lidar_yaw_);
-            } else {
-                q_odom_to_odom_omni_fused_ = q_rel;
-                has_fused_odom_to_odom_omni_ = true;
+        if (sanitizeQuaternion(
+                q_rel, get_logger(), *get_clock(),
+                "updateOdomTransforms:q_odom_to_odom_omni_raw")) {
+            {
+                std::lock_guard<std::mutex> lock(transform_mutex_);
+                q_odom_to_odom_omni_ = q_rel;
+                has_odom_to_odom_omni_ = true;
+                if (has_fused_odom_to_odom_omni_) {
+                    q_odom_to_odom_omni_fused_ =
+                        slerpSafe(q_odom_to_odom_omni_fused_, q_rel, comp_alpha_lidar_yaw_);
+                } else {
+                    q_odom_to_odom_omni_fused_ = q_rel;
+                    has_fused_odom_to_odom_omni_ = true;
+                }
             }
-        }
 
-        geometry_msgs::msg::TransformStamped t;
-        t.header.stamp = stamp;
-        t.header.frame_id = "odom";
-        t.child_frame_id = "odom_omni";
-        t.transform.rotation = tf2::toMsg(q_odom_to_odom_omni_fused_);
-        t.transform.translation.x = 0.0;
-        t.transform.translation.y = 0.0;
-        t.transform.translation.z = 0.0;
-        tf_broadcaster_->sendTransform(t);
+            geometry_msgs::msg::TransformStamped t;
+            t.header.stamp = stamp;
+            t.header.frame_id = "odom";
+            t.child_frame_id = "odom_omni";
+            t.transform.rotation = tf2::toMsg(q_odom_to_odom_omni_fused_);
+            t.transform.translation.x = 0.0;
+            t.transform.translation.y = 0.0;
+            t.transform.translation.z = 0.0;
+            sendTransformIfQuaternionValid(
+                *tf_broadcaster_, t, get_logger(), *get_clock(),
+                "updateOdomTransforms:odom->odom_omni");
+        }
     }
 }
 
@@ -693,13 +807,31 @@ tf2::Quaternion RMSerialDriver::slerpSafe(
     const tf2::Quaternion & from, const tf2::Quaternion & to, double alpha)
 {
     double a = std::clamp(alpha, 0.0, 1.0);
-    // tf2::slerp handles normalization internally; ensure inputs are normalized.
+    const auto logger = get_logger();
+    auto clock = get_clock();
+
     tf2::Quaternion f = from;
-    f.normalize();
     tf2::Quaternion t = to;
-    t.normalize();
+    const bool from_valid = sanitizeQuaternion(f, logger, *clock, "slerpSafe:from");
+    const bool to_valid = sanitizeQuaternion(t, logger, *clock, "slerpSafe:to");
+
+    if (!from_valid && !to_valid) {
+        RCLCPP_WARN_THROTTLE(
+            logger, *clock, 2000,
+            "Both input quaternions are invalid in slerpSafe, fallback to identity");
+        return tf2::Quaternion(0.0, 0.0, 0.0, 1.0);
+    }
+    if (!from_valid) {
+        return t;
+    }
+    if (!to_valid) {
+        return f;
+    }
+
     tf2::Quaternion r = tf2::slerp(f, t, a);
-    r.normalize();
+    if (!sanitizeQuaternion(r, logger, *clock, "slerpSafe:result")) {
+        return t;
+    }
     return r;
 }
 
