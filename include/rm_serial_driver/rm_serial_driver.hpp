@@ -33,6 +33,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <deque>
 #include <vector>
 
 #include "auto_aim_interfaces/msg/target.hpp"
@@ -75,6 +76,9 @@ private:
 
     tf2::Quaternion slerpSafe(
         const tf2::Quaternion & from, const tf2::Quaternion & to, double alpha);
+    void appendBigYawSampleLocked(const tf2::Quaternion & q, const rclcpp::Time & stamp);
+    bool findClosestBigYawSampleLocked(
+        const rclcpp::Time & target_stamp, tf2::Quaternion & q, rclcpp::Time & stamp) const;
 
     // Serial port
     std::unique_ptr<IoContext> owned_ctx_;
@@ -121,6 +125,12 @@ private:
     tf2::Quaternion yaw_imu_q_{0, 0, 0, 1};
     tf2::Quaternion aim_imu_q_{0, 0, 0, 1};
     tf2::Quaternion lidar_imu_q_{0, 0, 0, 1};
+    struct TimedQuaternion
+    {
+        tf2::Quaternion q;
+        rclcpp::Time stamp;
+    };
+    std::deque<TimedQuaternion> big_yaw_history_;
     rclcpp::Time yaw_imu_stamp_;
     rclcpp::Time aim_imu_stamp_;
     rclcpp::Time lidar_imu_stamp_;
@@ -145,6 +155,9 @@ private:
     double comp_alpha_yaw_aim_ = 0.2;
     double comp_alpha_lidar_yaw_ = 0.2;
     double comp_alpha_motor_vs_imu_ = 0.7;
+    double big_yaw_buffer_duration_sec_ = 0.2;
+    std::size_t big_yaw_buffer_max_size_ = 256;
+    double lidar_tf_max_stamp_diff_sec_ = 0.05;
     bool pitch_imu_enabled_ = true;
 
     // Dual-yaw allocation (big yaw + small yaw)

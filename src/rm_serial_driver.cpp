@@ -22,6 +22,7 @@
 #include <auto_aim_interfaces/srv/set_mode.hpp>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -92,6 +93,42 @@ bool sendTransformIfQuaternionValid(
 }
 }  // namespace
 
+void RMSerialDriver::appendBigYawSampleLocked(const tf2::Quaternion & q, const rclcpp::Time & stamp)
+{
+    big_yaw_history_.push_back(TimedQuaternion{q, stamp});
+
+    while (big_yaw_history_.size() > big_yaw_buffer_max_size_) {
+        big_yaw_history_.pop_front();
+    }
+
+    while (!big_yaw_history_.empty() &&
+           (stamp - big_yaw_history_.front().stamp).seconds() > big_yaw_buffer_duration_sec_) {
+        big_yaw_history_.pop_front();
+    }
+}
+
+bool RMSerialDriver::findClosestBigYawSampleLocked(
+    const rclcpp::Time & target_stamp, tf2::Quaternion & q, rclcpp::Time & stamp) const
+{
+    if (big_yaw_history_.empty()) {
+        return false;
+    }
+
+    auto best_it = big_yaw_history_.begin();
+    double best_abs_diff = std::abs((best_it->stamp - target_stamp).seconds());
+    for (auto it = std::next(big_yaw_history_.begin()); it != big_yaw_history_.end(); ++it) {
+        const double current_abs_diff = std::abs((it->stamp - target_stamp).seconds());
+        if (current_abs_diff < best_abs_diff) {
+            best_it = it;
+            best_abs_diff = current_abs_diff;
+        }
+    }
+
+    q = best_it->q;
+    stamp = best_it->stamp;
+    return true;
+}
+
 RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 : Node("rm_serial_driver", options),
   owned_ctx_{new IoContext(2)},
@@ -106,6 +143,15 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     comp_alpha_yaw_aim_ = this->declare_parameter("comp_alpha_yaw_aim", 0.2);
     comp_alpha_lidar_yaw_ = this->declare_parameter("comp_alpha_lidar_yaw", 0.2);
     comp_alpha_motor_vs_imu_ = this->declare_parameter("comp_alpha_motor_vs_imu", 0.7);
+    big_yaw_buffer_duration_sec_ =
+        std::max(0.0, this->declare_parameter("big_yaw_buffer_duration_sec", 0.2));
+    auto big_yaw_buffer_max_size = this->declare_parameter("big_yaw_buffer_max_size", 256);
+    if (big_yaw_buffer_max_size < 1) {
+        big_yaw_buffer_max_size = 1;
+    }
+    big_yaw_buffer_max_size_ = static_cast<std::size_t>(big_yaw_buffer_max_size);
+    lidar_tf_max_stamp_diff_sec_ =
+        std::max(0.0, this->declare_parameter("lidar_tf_max_stamp_diff_sec", 0.05));
     pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true);
     use_dual_yaw_split_ = this->declare_parameter("use_dual_yaw_split", false);
     double dual_yaw_limit_deg = this->declare_parameter("dual_yaw_limit_deg", 60.0);
@@ -234,6 +280,7 @@ void RMSerialDriver::receiveData()
                 bool crc_ok = crc16::Verify_CRC16_Check_Sum(
                     reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
                 if (crc_ok) {
+                    const rclcpp::Time sample_stamp = this->now();
                     tf2::Quaternion yaw_q(
                         packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2],
                         packet.yaw_imu_q[3]);
@@ -285,10 +332,11 @@ void RMSerialDriver::receiveData()
                         std::lock_guard<std::mutex> lock(transform_mutex_);
                         yaw_imu_q_ = yaw_q;
                         aim_imu_q_ = aim_q;
-                        yaw_imu_stamp_ = this->now();
+                        yaw_imu_stamp_ = sample_stamp;
                         aim_imu_stamp_ = yaw_imu_stamp_;
                         has_yaw_imu_ = true;
                         has_aim_imu_ = pitch_imu_enabled_;
+                        appendBigYawSampleLocked(yaw_q, sample_stamp);
                         motor_yaw_ = motor_yaw;
                         motor_pitch_ = motor_pitch;
                         motor_stamp_ = yaw_imu_stamp_;
@@ -304,7 +352,7 @@ void RMSerialDriver::receiveData()
                     geometry_msgs::msg::TransformStamped t_omni;
                     timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
                     t_omni.header.stamp =
-                        this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+                        sample_stamp + rclcpp::Duration::from_seconds(timestamp_offset_);
                     t_omni.header.frame_id = "odom_omni";
                     t_omni.child_frame_id = "omni_gimbal_link";
                     q_rot.setRPY(0, 0, 0);
@@ -319,7 +367,7 @@ void RMSerialDriver::receiveData()
                     geometry_msgs::msg::TransformStamped t;
                     timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
                     t.header.stamp =
-                        this->now() + rclcpp::Duration::from_seconds(timestamp_offset_);
+                        sample_stamp + rclcpp::Duration::from_seconds(timestamp_offset_);
                     t.header.frame_id = "odom_aim";
                     t.child_frame_id = "gimbal_link";
                     q_rot.setRPY(0, 0, 0);
@@ -379,34 +427,99 @@ void RMSerialDriver::receiveData()
 
 void RMSerialDriver::updateOdomTransforms()
 {
+    const rclcpp::Time stamp = this->now();
+    timestamp_offset_ = this->get_parameter("timestamp_offset").as_double();
+    const rclcpp::Duration tf_stamp_offset = rclcpp::Duration::from_seconds(timestamp_offset_);
     geometry_msgs::msg::TransformStamped lidar_tf;
     bool has_lidar_tf = false;
-    try {
-        std::string tf_err;
-        if (tf_buffer_->canTransform(
-                "odom", "base_link", tf2::TimePointZero, tf2::durationFromSec(0.0), &tf_err)) {
-            lidar_tf = tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
-            has_lidar_tf = true;
-        } else {
-            RCLCPP_WARN_THROTTLE(
-                get_logger(), *get_clock(), 2000, "Failed to lookup odom->base_link: %s",
-                tf_err.c_str());
+    bool has_lidar_for_current_yaw = false;
+    bool used_latest_lidar_tf_fallback = false;
+    rclcpp::Time yaw_stamp(0, 0, this->get_clock()->get_clock_type());
+    rclcpp::Time paired_yaw_stamp(0, 0, this->get_clock()->get_clock_type());
+    tf2::Quaternion paired_yaw_q(0.0, 0.0, 0.0, 1.0);
+    bool has_yaw_for_lookup = false;
+    bool has_paired_yaw_for_lidar = false;
+    {
+        std::lock_guard<std::mutex> lock(transform_mutex_);
+        if (has_yaw_imu_) {
+            yaw_stamp = yaw_imu_stamp_;
+            has_yaw_for_lookup = true;
         }
-    } catch (const tf2::TransformException & ex) {
-        RCLCPP_WARN_THROTTLE(
-            get_logger(), *get_clock(), 2000, "Failed to lookup odom->base_link: %s", ex.what());
+    }
+
+    if (has_yaw_for_lookup) {
+        try {
+            const auto latest_lidar_tf =
+                tf_buffer_->lookupTransform("odom", "base_link", tf2::TimePointZero);
+            const rclcpp::Time latest_lidar_stamp(
+                latest_lidar_tf.header.stamp, this->get_clock()->get_clock_type());
+            if (yaw_stamp > latest_lidar_stamp) {
+                lidar_tf = latest_lidar_tf;
+                has_lidar_tf = true;
+                used_latest_lidar_tf_fallback = true;
+            } else {
+                lidar_tf = tf_buffer_->lookupTransform("odom", "base_link", yaw_stamp);
+                has_lidar_tf = true;
+            }
+        } catch (const tf2::TransformException & ex) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "Failed to lookup odom->base_link for yaw stamp %.3f: %s",
+                yaw_stamp.seconds(), ex.what());
+        }
     }
 
     if (has_lidar_tf) {
-        tf2::Quaternion lidar_q(
-            lidar_tf.transform.rotation.x, lidar_tf.transform.rotation.y,
-            lidar_tf.transform.rotation.z, lidar_tf.transform.rotation.w);
-        if (sanitizeQuaternion(
-                lidar_q, get_logger(), *get_clock(), "updateOdomTransforms:odom->base_link")) {
+        const rclcpp::Time lidar_stamp(lidar_tf.header.stamp, this->get_clock()->get_clock_type());
+        {
             std::lock_guard<std::mutex> lock(transform_mutex_);
-            lidar_imu_q_ = lidar_q;
-            lidar_imu_stamp_ = lidar_tf.header.stamp;
-            has_lidar_imu_ = true;
+            if (used_latest_lidar_tf_fallback) {
+                has_paired_yaw_for_lidar =
+                    findClosestBigYawSampleLocked(lidar_stamp, paired_yaw_q, paired_yaw_stamp);
+            } else if (has_yaw_imu_) {
+                paired_yaw_q = yaw_imu_q_;
+                paired_yaw_stamp = yaw_imu_stamp_;
+                has_paired_yaw_for_lidar = true;
+            }
+        }
+
+        if (!has_paired_yaw_for_lidar) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "Skip odom->odom_omni update because big_yaw history is unavailable for lidar stamp %.3f",
+                lidar_stamp.seconds());
+        } else {
+            const double stamp_diff_sec =
+                std::abs((lidar_stamp - paired_yaw_stamp).seconds());
+            if (used_latest_lidar_tf_fallback) {
+                RCLCPP_DEBUG_THROTTLE(
+                    get_logger(), *get_clock(), 2000,
+                    "Using latest odom->base_link fallback for paired yaw stamp %.3f, lidar stamp %.3f, diff %.3f s",
+                    paired_yaw_stamp.seconds(), lidar_stamp.seconds(), stamp_diff_sec);
+            }
+            if (stamp_diff_sec > lidar_tf_max_stamp_diff_sec_) {
+                RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 2000,
+                    "Skip odom->odom_omni update because odom->base_link stamp diff is %.3f s "
+                    "(limit %.3f s, paired_yaw=%.3f, lidar=%.3f)",
+                    stamp_diff_sec, lidar_tf_max_stamp_diff_sec_, paired_yaw_stamp.seconds(),
+                    lidar_stamp.seconds());
+            } else {
+                tf2::Quaternion lidar_q(
+                    lidar_tf.transform.rotation.x, lidar_tf.transform.rotation.y,
+                    lidar_tf.transform.rotation.z, lidar_tf.transform.rotation.w);
+                if (sanitizeQuaternion(
+                        paired_yaw_q, get_logger(), *get_clock(),
+                        "updateOdomTransforms:paired_big_yaw_q") &&
+                    sanitizeQuaternion(
+                        lidar_q, get_logger(), *get_clock(), "updateOdomTransforms:odom->base_link")) {
+                    std::lock_guard<std::mutex> lock(transform_mutex_);
+                    lidar_imu_q_ = lidar_q;
+                    lidar_imu_stamp_ = lidar_stamp;
+                    has_lidar_imu_ = true;
+                    has_lidar_for_current_yaw = true;
+                }
+            }
         }
     }
 
@@ -432,6 +545,7 @@ void RMSerialDriver::updateOdomTransforms()
         has_lidar = has_lidar_imu_;
         has_motor = has_motor_feedback_;
     }
+    has_lidar = has_lidar && has_lidar_for_current_yaw;
 
     if (has_yaw &&
         !sanitizeQuaternion(yaw_q, get_logger(), *get_clock(), "updateOdomTransforms:yaw_imu_q_")) {
@@ -446,8 +560,6 @@ void RMSerialDriver::updateOdomTransforms()
         has_lidar = false;
     }
 
-    const rclcpp::Time stamp = this->now();
-
     if (!pitch_imu_enabled_) {
         if (has_yaw) {
             tf2::Quaternion identity_q(0.0, 0.0, 0.0, 1.0);
@@ -460,7 +572,7 @@ void RMSerialDriver::updateOdomTransforms()
             }
 
             geometry_msgs::msg::TransformStamped t;
-            t.header.stamp = stamp;
+            t.header.stamp = yaw_stamp + tf_stamp_offset;
             t.header.frame_id = "odom_omni";
             t.child_frame_id = "odom_aim";
             t.transform.rotation = tf2::toMsg(identity_q);
@@ -505,7 +617,7 @@ void RMSerialDriver::updateOdomTransforms()
                 }
 
                 geometry_msgs::msg::TransformStamped t;
-                t.header.stamp = stamp;
+                t.header.stamp = yaw_stamp + tf_stamp_offset;
                 t.header.frame_id = "odom_omni";
                 t.child_frame_id = "odom_aim";
                 t.transform.rotation = tf2::toMsg(q_odom_omni_to_odom_aim_fused_);
@@ -519,8 +631,9 @@ void RMSerialDriver::updateOdomTransforms()
         }
     }
 
-    if (has_lidar && has_yaw) {
-        tf2::Quaternion q_rel = lidar_q.inverse() * yaw_q;
+    if (has_lidar && has_paired_yaw_for_lidar) {
+        // q(odom->odom_omni) = q(odom->base_link) * inv(q(odom_omni->omni_gimbal_link))
+        tf2::Quaternion q_rel = lidar_q * paired_yaw_q.inverse();
         if (sanitizeQuaternion(
                 q_rel, get_logger(), *get_clock(),
                 "updateOdomTransforms:q_odom_to_odom_omni_raw")) {
@@ -538,7 +651,7 @@ void RMSerialDriver::updateOdomTransforms()
             }
 
             geometry_msgs::msg::TransformStamped t;
-            t.header.stamp = stamp;
+            t.header.stamp = paired_yaw_stamp + tf_stamp_offset;
             t.header.frame_id = "odom";
             t.child_frame_id = "odom_omni";
             t.transform.rotation = tf2::toMsg(q_odom_to_odom_omni_fused_);
@@ -672,34 +785,12 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
     try {
-        bool has_transform = false;
-        tf2::Quaternion q_rel;
-
-        {
-            std::lock_guard<std::mutex> lock(transform_mutex_);
-            has_transform = has_fused_odom_to_odom_omni_;
-            q_rel = q_odom_to_odom_omni_fused_;
-        }
-
-        if (!has_transform) {
-            RCLCPP_WARN_THROTTLE(
-                get_logger(), *get_clock(), 2000,
-                "Skipping nav send because odom->odom_omni transform is unavailable");
-            return;
-        }
-
-        tf2::Vector3 linear(msg->linear.x, msg->linear.y, msg->linear.z);
-        tf2::Vector3 angular(msg->angular.x, msg->angular.y, msg->angular.z);
-
-        tf2::Vector3 linear_in_omni = tf2::quatRotate(q_rel, linear);
-        tf2::Vector3 angular_in_omni = tf2::quatRotate(q_rel, angular);
-
-        const float linear_x = static_cast<float>(linear_in_omni.x());
-        const float linear_y = static_cast<float>(linear_in_omni.y());
-        const float linear_z = static_cast<float>(linear_in_omni.z());
-        const float angular_x = static_cast<float>(angular_in_omni.x());
-        const float angular_y = static_cast<float>(angular_in_omni.y());
-        const float angular_z = static_cast<float>(angular_in_omni.z());
+        const float linear_x = -static_cast<float>(msg->linear.x);
+        const float linear_y = -static_cast<float>(msg->linear.y);
+        const float linear_z = static_cast<float>(msg->linear.z);
+        const float angular_x = static_cast<float>(msg->angular.x);
+        const float angular_y = static_cast<float>(msg->angular.y);
+        const float angular_z = static_cast<float>(msg->angular.z);
 
         if (nav_packet_version_ == 2) {
             uint8_t follow_mark = 1;
@@ -740,8 +831,8 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
             serial_driver_->port()->send(data);
         } else {
             SendNavPacket packet;
-            packet.linear_x = linear_x;
-            packet.linear_y = linear_y;
+            packet.linear_x = -linear_x;
+            packet.linear_y = -linear_y;
             packet.linear_z = linear_z;
             packet.angular_x = angular_x;
             packet.angular_y = angular_y;
