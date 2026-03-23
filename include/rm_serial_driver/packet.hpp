@@ -42,8 +42,7 @@ struct SendAimPacket
     uint8_t reserved : 2;
 
     float pitch;
-    float big_yaw;     // outer (heavy) yaw
-    float small_yaw;   // inner (light) yaw
+    float yaw; 
 
     uint16_t checksum = 0;
 };

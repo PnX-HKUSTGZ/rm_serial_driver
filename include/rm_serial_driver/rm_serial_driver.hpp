@@ -159,11 +159,7 @@ private:
     std::size_t big_yaw_buffer_max_size_ = 256;
     double lidar_tf_max_stamp_diff_sec_ = 0.05;
     bool pitch_imu_enabled_ = true;
-
-    // Dual-yaw allocation (big yaw + small yaw)
-    bool use_dual_yaw_split_ = false;
-    double dual_yaw_limit_rad_ = 3.14159265358979323846 / 3.0;       // 60 deg default limit
-    double dual_yaw_center_ratio_ = 0.3;           // aggressiveness of small-yaw recentering
+    double cmd_vel_linear_scale_ = 0.4;
 
     std::mutex transform_mutex_;
 
