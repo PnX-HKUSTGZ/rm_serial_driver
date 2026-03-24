@@ -180,7 +180,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
     // Detect parameter client
     detector_param_client_ =
-        std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector");
+        std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
 
     // Tracker reset service client
     reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
@@ -191,7 +191,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     set_rune_solver_mode_client_ =
         this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
     set_car_detector_mode_client_ =
-        this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector/set_mode");
+        this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector_main/set_mode");
     set_car_tracker_mode_client_ =
         this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_tracker/set_mode");
 
@@ -276,6 +276,13 @@ void RMSerialDriver::receiveData()
                 bool crc_ok = crc16::Verify_CRC16_Check_Sum(
                     reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
                 if (crc_ok) {
+                    if (!initial_set_param_ ||
+                        packet.detect_color != previous_receive_color_) {
+                        bool detect_color_set = packet.detect_color;
+                        setParam(rclcpp::Parameter("detect_color", uint8_t(detect_color_set)));
+                        previous_receive_color_ = packet.detect_color;
+                    }
+                    
                     const rclcpp::Time sample_stamp = this->now();
                     tf2::Quaternion yaw_q(
                         packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2],
@@ -749,7 +756,8 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
             packet.angular_x = angular_x;
             packet.angular_y = angular_y;
             packet.angular_z = angular_z;
-            packet.follow_mark = follow_mark;
+            packet.follow_mark = follow_mark; 
+            packet.follow_mark = 0; // 设置为0，联盟赛没必要做底盘跟随
 
             crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
