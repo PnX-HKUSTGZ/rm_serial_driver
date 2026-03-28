@@ -42,10 +42,16 @@ struct SendAimPacket
     uint8_t reserved : 2;
 
     float pitch;
-    float yaw; 
+    float yaw;
+    float distance;
 
     uint16_t checksum = 0;
 };
+
+constexpr std::size_t kSendAimPacketExpectedSize = 16U;
+static_assert(
+  sizeof(SendAimPacket) == kSendAimPacketExpectedSize,
+  "SendAimPacket layout mismatch");
 
 struct SendNavPacket
 {

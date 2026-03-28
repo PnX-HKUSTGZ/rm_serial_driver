@@ -179,8 +179,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     remain_ammo_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/remain_ammo", 10);
 
     // Detect parameter client
-    detector_param_client_ =
-        std::make_shared<rclcpp::AsyncParametersClient>(this, "armor_detector_main");
+    refreshDetectorParamClients();
 
     // Tracker reset service client
     reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
@@ -276,7 +275,7 @@ void RMSerialDriver::receiveData()
                 bool crc_ok = crc16::Verify_CRC16_Check_Sum(
                     reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
                 if (crc_ok) {
-                    if (!initial_set_param_ ||
+                    if (!initial_set_param_["detect_color"] ||
                         packet.detect_color != previous_receive_color_) {
                         bool detect_color_set = packet.detect_color;
                         setParam(rclcpp::Parameter("detect_color", uint8_t(detect_color_set)));
@@ -698,6 +697,7 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
         tf2::Matrix3x3(target_in_omni).getRPY(roll, pitch, yaw);
         packet.pitch = static_cast<float>(pitch);
         packet.yaw = static_cast<float>(yaw);
+        packet.distance = static_cast<float>(msg->distance);
 
         crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
@@ -962,26 +962,101 @@ void RMSerialDriver::reopenPort()
 
 void RMSerialDriver::setParam(const rclcpp::Parameter & param)
 {
-    if (!detector_param_client_->service_is_ready()) {
-        RCLCPP_WARN(get_logger(), "Service not ready, skipping parameter set");
+    refreshDetectorParamClients();
+
+    if (detector_param_clients_.empty()) {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 2000,
+            "No armor_detector_* node found, skipping parameter set");
         return;
     }
 
-    if (!set_param_future_.valid() ||
-        set_param_future_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-        RCLCPP_INFO(get_logger(), "Setting detect_color to %ld...", param.as_int());
-        set_param_future_ = detector_param_client_->set_parameters(
-            {param}, [this, param](const ResultFuturePtr & results) {
+    bool any_service_ready = false;
+    for (auto & entry : detector_param_clients_) {
+        if (!entry.client->service_is_ready()) {
+            RCLCPP_WARN_THROTTLE(
+                get_logger(), *get_clock(), 2000,
+                "Service %s/set_parameters not ready, skipping parameter set",
+                entry.node_name.c_str());
+            continue;
+        }
+        any_service_ready = true;
+
+        if (!entry.future.valid() ||
+            entry.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            RCLCPP_INFO(
+                get_logger(), "Setting %s to %s on %s...", param.get_name().c_str(),
+                param.value_to_string().c_str(), entry.node_name.c_str());
+            const std::string target_node = entry.node_name;
+            entry.future = entry.client->set_parameters(
+                {param}, [this, param, target_node](const ResultFuturePtr & results) {
                 for (const auto & result : results.get()) {
                     if (!result.successful) {
                         RCLCPP_ERROR(
-                            get_logger(), "Failed to set parameter: %s", result.reason.c_str());
+                            get_logger(), "Failed to set parameter %s on %s: %s",
+                            param.get_name().c_str(), target_node.c_str(), result.reason.c_str());
                         return;
                     }
                 }
-                RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
-                initial_set_param_ = true;
+                RCLCPP_INFO(
+                    get_logger(), "Successfully set %s to %s on %s!", param.get_name().c_str(),
+                    param.value_to_string().c_str(), target_node.c_str());
+                initial_set_param_[param.get_name()] = true;
             });
+        }
+    }
+
+    if (!any_service_ready) {
+        RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 2000,
+            "No armor_detector_* parameter service is ready, skipping parameter set");
+    }
+}
+
+void RMSerialDriver::refreshDetectorParamClients()
+{
+    std::vector<std::string> detector_nodes;
+    const auto service_names_and_types = this->get_service_names_and_types();
+    constexpr const char * kSetParametersSuffix = "/set_parameters";
+    const std::size_t suffix_len = std::char_traits<char>::length(kSetParametersSuffix);
+
+    for (const auto & service_entry : service_names_and_types) {
+        const auto & service_name = service_entry.first;
+        if (service_name.size() <= suffix_len) {
+            continue;
+        }
+        if (service_name.compare(service_name.size() - suffix_len, suffix_len, kSetParametersSuffix) !=
+            0) {
+            continue;
+        }
+
+        const std::string detector_node = service_name.substr(0, service_name.size() - suffix_len);
+        const std::size_t leaf_pos = detector_node.find_last_of('/');
+        const std::string detector_leaf_name =
+            (leaf_pos == std::string::npos) ? detector_node : detector_node.substr(leaf_pos + 1);
+        if (detector_leaf_name.rfind("armor_detector_", 0) == 0) {
+            detector_nodes.push_back(detector_node);
+        }
+    }
+
+    std::sort(detector_nodes.begin(), detector_nodes.end());
+    detector_nodes.erase(std::unique(detector_nodes.begin(), detector_nodes.end()), detector_nodes.end());
+
+    for (const auto & detector_node : detector_nodes) {
+        const auto existed = std::find_if(
+            detector_param_clients_.begin(), detector_param_clients_.end(),
+            [&detector_node](const DetectorParamClientEntry & entry) {
+                return entry.node_name == detector_node;
+            });
+        if (existed != detector_param_clients_.end()) {
+            continue;
+        }
+
+        detector_param_clients_.push_back(DetectorParamClientEntry{
+            detector_node,
+            std::make_shared<rclcpp::AsyncParametersClient>(this, detector_node),
+            ResultFuturePtr{}});
+        RCLCPP_INFO(get_logger(), "Discovered detector parameter client: %s", detector_node.c_str());
     }
 }
 

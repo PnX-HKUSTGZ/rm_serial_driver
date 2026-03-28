@@ -18,6 +18,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <unordered_map>
 #include <std_msgs/msg/u_int16.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_srvs/srv/trigger.hpp>
@@ -68,6 +69,7 @@ private:
 
     void setParam(const rclcpp::Parameter & param);
     void setRuneParam(const rclcpp::Parameter & param);
+    void refreshDetectorParamClients();
 
     void resetTracker();
 
@@ -90,15 +92,18 @@ private:
     // Param client to set detect_colr
     using ResultFuturePtr =
         std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>>;
-    bool initial_set_param_ = false;
+    struct DetectorParamClientEntry
+    {
+        std::string node_name;
+        rclcpp::AsyncParametersClient::SharedPtr client;
+        ResultFuturePtr future;
+    };
+    std::unordered_map<std::string, bool> initial_set_param_;
     bool initial_set_rune_param_ = false;
     uint8_t previous_receive_color_ = 0;
-    rclcpp::AsyncParametersClient::SharedPtr detector_param_client_;
-    ResultFuturePtr set_param_future_;
+    std::vector<DetectorParamClientEntry> detector_param_clients_;
     rclcpp::AsyncParametersClient::SharedPtr rune_detector_param_client_;
     ResultFuturePtr set_rune_param_future_;
-    rclcpp::AsyncParametersClient::SharedPtr detector_param_client_wide_;
-    ResultFuturePtr set_param_future_wide_;
 
     // Service client to reset tracker
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_tracker_client_;

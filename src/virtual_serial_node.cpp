@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <future>
 #include <memory>
+#include <unordered_map>
 #include <rclcpp/executors.hpp>
 #include <thread>
 // ros2
@@ -70,7 +71,7 @@ public:
       double pitch = this->get_parameter("pitch").as_double();
       double yaw = this->get_parameter("yaw").as_double();
 
-      if (!initial_set_param_ || color != previous_receive_color_) {
+      if (!initial_set_param_["detect_color"] || color != previous_receive_color_) {
         setParam(rclcpp::Parameter("detect_color", color));
         previous_receive_color_ = color;
       }
@@ -145,8 +146,8 @@ public:
               return;
             }
           }
-          RCLCPP_INFO(get_logger(), "Successfully set detect_color to %ld!", param.as_int());
-          initial_set_param_ = true;
+          RCLCPP_INFO(get_logger(), "Successfully set %s to %s!", param.get_name().c_str(), param.value_to_string().c_str());
+          initial_set_param_[param.get_name()] = true;
         });
     }
   }
@@ -158,7 +159,7 @@ private:
   
   // Param client to set detect_colr
   using ResultFuturePtr = std::shared_future<std::vector<rcl_interfaces::msg::SetParametersResult>>;
-  bool initial_set_param_ = false;
+  std::unordered_map<std::string, bool> initial_set_param_;
   uint8_t previous_receive_color_ = 0;
   rclcpp::AsyncParametersClient::SharedPtr detector_param_client_;
   ResultFuturePtr set_param_future_;
