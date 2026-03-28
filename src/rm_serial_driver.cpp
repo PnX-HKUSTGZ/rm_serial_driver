@@ -219,15 +219,8 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
         packet.yaw_acc = msg->yaw_acc;
         packet.pitch_vel = msg->pitch_vel;
         packet.pitch_acc = msg->pitch_acc;
-        if (msg->distance < 2.0) {
-            packet.distance_level = 0;
-        } else if (msg->distance < 4.0) {
-            packet.distance_level = 1;
-        } else if (msg->distance < 6.0) {
-            packet.distance_level = 2;
-        } else {
-            packet.distance_level = 3;
-        }
+        packet.distance = msg->distance;
+        
         // std::cerr << "Sending Data:" << std::endl;
         // std::cerr << "tracking: " << static_cast<int>(packet.tracking) << std::endl;
         // std::cerr << "id: " << static_cast<int>(packet.id) << std::endl;
@@ -235,7 +228,6 @@ void RMSerialDriver::sendData(const auto_aim_interfaces::msg::Firecontrol::Share
         // std::cerr << "yaw: " << packet.yaw << std::endl;
         // std::cerr << "yaw_vel: " << packet.yaw_vel << std::endl;
         // std::cerr << "yaw_acc: " << packet.yaw_acc << std::endl;
-        // std::cerr << "distance_level: " << static_cast<int>(packet.distance_level) << std::endl;
         crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
         std::vector<uint8_t> data = toVector(packet);
