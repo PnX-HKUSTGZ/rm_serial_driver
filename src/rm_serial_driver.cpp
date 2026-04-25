@@ -260,6 +260,9 @@ void RMSerialDriver::receiveData()
     std::vector<uint8_t> header(1);
     std::vector<uint8_t> data;
     data.reserve(sizeof(ReceivePacket));
+    rclcpp::Time last_detect_color_sync_stamp(0, 0, this->get_clock()->get_clock_type());
+    rclcpp::Time last_detector_discovery_stamp(0, 0, this->get_clock()->get_clock_type());
+    constexpr double kDetectColorSyncRetryIntervalSec = 0.5;
 
     while (rclcpp::ok()) {
         try {
@@ -275,14 +278,36 @@ void RMSerialDriver::receiveData()
                 bool crc_ok = crc16::Verify_CRC16_Check_Sum(
                     reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
                 if (crc_ok) {
-                    if (!initial_set_param_["detect_color"] ||
-                        packet.detect_color != previous_receive_color_) {
+                    const rclcpp::Time sample_stamp = this->now();
+                    const bool need_discovery_refresh =
+                        (sample_stamp - last_detector_discovery_stamp).seconds() >=
+                        kDetectColorSyncRetryIntervalSec;
+                    if (need_discovery_refresh) {
+                        refreshDetectorParamClients();
+                        last_detector_discovery_stamp = sample_stamp;
+                    }
+
+                    const bool color_changed = packet.detect_color != previous_receive_color_;
+                    const bool has_unsynced_service = !initial_set_param_["detect_color"];
+                    const bool need_retry_sync =
+                        has_unsynced_service &&
+                        (sample_stamp - last_detect_color_sync_stamp).seconds() >=
+                        kDetectColorSyncRetryIntervalSec;
+
+                    if (color_changed) {
+                        for (auto & entry : detector_param_clients_) {
+                            entry.synced_params["detect_color"] = false;
+                        }
+                        initial_set_param_["detect_color"] = false;
+                    }
+
+                    if (color_changed || need_retry_sync) {
                         bool detect_color_set = packet.detect_color;
                         setParam(rclcpp::Parameter("detect_color", uint8_t(detect_color_set)));
                         previous_receive_color_ = packet.detect_color;
+                        last_detect_color_sync_stamp = sample_stamp;
                     }
-                    
-                    const rclcpp::Time sample_stamp = this->now();
+
                     tf2::Quaternion yaw_q(
                         packet.yaw_imu_q[0], packet.yaw_imu_q[1], packet.yaw_imu_q[2],
                         packet.yaw_imu_q[3]);
@@ -972,7 +997,24 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
     }
 
     bool any_service_ready = false;
+    bool has_unsynced_ready_service = false;
     for (auto & entry : detector_param_clients_) {
+        if (entry.future.valid() &&
+            entry.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            bool request_success = true;
+            for (const auto & result : entry.future.get()) {
+                if (!result.successful) {
+                    request_success = false;
+                    break;
+                }
+            }
+            if (request_success && !entry.inflight_param_name.empty()) {
+                entry.synced_params[entry.inflight_param_name] = true;
+            }
+            entry.future = ResultFuturePtr{};
+            entry.inflight_param_name.clear();
+        }
+
         if (!entry.client->service_is_ready()) {
             RCLCPP_WARN_THROTTLE(
                 get_logger(), *get_clock(), 2000,
@@ -982,12 +1024,17 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
         }
         any_service_ready = true;
 
-        if (!entry.future.valid() ||
-            entry.future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        if (entry.synced_params[param.get_name()]) {
+            continue;
+        }
+        has_unsynced_ready_service = true;
+
+        if (!entry.future.valid()) {
             RCLCPP_INFO(
                 get_logger(), "Setting %s to %s on %s...", param.get_name().c_str(),
                 param.value_to_string().c_str(), entry.node_name.c_str());
             const std::string target_node = entry.node_name;
+            entry.inflight_param_name = param.get_name();
             entry.future = entry.client->set_parameters(
                 {param}, [this, param, target_node](const ResultFuturePtr & results) {
                 for (const auto & result : results.get()) {
@@ -1001,10 +1048,11 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
                 RCLCPP_INFO(
                     get_logger(), "Successfully set %s to %s on %s!", param.get_name().c_str(),
                     param.value_to_string().c_str(), target_node.c_str());
-                initial_set_param_[param.get_name()] = true;
             });
         }
     }
+
+    initial_set_param_[param.get_name()] = any_service_ready && !has_unsynced_ready_service;
 
     if (!any_service_ready) {
         RCLCPP_WARN_THROTTLE(
@@ -1016,6 +1064,7 @@ void RMSerialDriver::setParam(const rclcpp::Parameter & param)
 void RMSerialDriver::refreshDetectorParamClients()
 {
     std::vector<std::string> detector_nodes;
+    bool discovered_new_client = false;
     const auto service_names_and_types = this->get_service_names_and_types();
     constexpr const char * kSetParametersSuffix = "/set_parameters";
     const std::size_t suffix_len = std::char_traits<char>::length(kSetParametersSuffix);
@@ -1055,8 +1104,16 @@ void RMSerialDriver::refreshDetectorParamClients()
         detector_param_clients_.push_back(DetectorParamClientEntry{
             detector_node,
             std::make_shared<rclcpp::AsyncParametersClient>(this, detector_node),
-            ResultFuturePtr{}});
+            ResultFuturePtr{},
+            std::string{},
+            std::unordered_map<std::string, bool>{}});
+        discovered_new_client = true;
         RCLCPP_INFO(get_logger(), "Discovered detector parameter client: %s", detector_node.c_str());
+    }
+
+    if (discovered_new_client) {
+        // New detector nodes need a re-broadcast even when detect_color value is unchanged.
+        initial_set_param_["detect_color"] = false;
     }
 }
 

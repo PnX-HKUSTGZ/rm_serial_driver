@@ -97,6 +97,8 @@ private:
         std::string node_name;
         rclcpp::AsyncParametersClient::SharedPtr client;
         ResultFuturePtr future;
+        std::string inflight_param_name;
+        std::unordered_map<std::string, bool> synced_params;
     };
     std::unordered_map<std::string, bool> initial_set_param_;
     bool initial_set_rune_param_ = false;
