@@ -92,16 +92,15 @@ public:
 
         timer_ = this->create_wall_timer(std::chrono::milliseconds(5), [this]() {
             int mode = this->get_parameter("vision_mode").as_int();
-            int color = this->get_parameter("color").as_int();
             double roll = this->get_parameter("roll").as_double();
             double pitch = this->get_parameter("pitch").as_double();
             double yaw = this->get_parameter("yaw").as_double();
 
-            if (!initial_set_param_ || !initial_set_rune_param_ ||
-                color != previous_receive_color_) {
-                setParam(rclcpp::Parameter("detect_color", int(color)));
-                setRuneParam(rclcpp::Parameter("detect_color", int(!color)));
-                previous_receive_color_ = color;
+            // Hardcode detect_color to red (0)
+            if (!initial_set_param_ || !initial_set_rune_param_) {
+                setParam(rclcpp::Parameter("detect_color", int(0)));
+                setRuneParam(rclcpp::Parameter("detect_color", int(1)));
+                previous_receive_color_ = 0;
             }
             tf2::Quaternion q;
             q.setRPY(roll * M_PI / 180.0, -pitch * M_PI / 180.0, yaw * M_PI / 180.0);

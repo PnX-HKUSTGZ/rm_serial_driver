@@ -36,6 +36,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     getParams();
 
     has_wide_cam_ = this->declare_parameter("wide_cam", false);
+    has_rune_ = this->declare_parameter("has_rune", false);
 
     // TF broadcaster
     timestamp_offset_ = this->declare_parameter("timestamp_offset", 0.0);
@@ -60,10 +61,12 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     reset_tracker_client_ = this->create_client<std_srvs::srv::Trigger>("/tracker/reset");
 
     // set mode service client
-    set_rune_detector_mode_client_ =
-        this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_detector/set_mode");
-    set_rune_solver_mode_client_ =
-        this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
+    if (has_rune_) {
+        set_rune_detector_mode_client_ =
+            this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_detector/set_mode");
+        set_rune_solver_mode_client_ =
+            this->create_client<auto_aim_interfaces::srv::SetMode>("/rune_solver/set_mode");
+    }
     set_car_detector_mode_client_ =
         this->create_client<auto_aim_interfaces::srv::SetMode>("/armor_detector_main/set_mode");
     if(has_wide_cam_){
@@ -152,7 +155,17 @@ void RMSerialDriver::receiveData()
                     }
 
                     if (packet.set_mode != mode_) {
-                        if (setRuneMode(packet.set_mode) && setCarMode(packet.set_mode)) {
+                        bool mode_set_success = true;
+                        
+                        if (has_rune_ && !setRuneMode(packet.set_mode)) {
+                            mode_set_success = false;
+                        }
+                        
+                        if (!setCarMode(packet.set_mode)) {
+                            mode_set_success = false;
+                        }
+                        
+                        if (mode_set_success) {
                             mode_ = packet.set_mode;
                         }
                     }
