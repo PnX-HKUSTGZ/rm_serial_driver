@@ -174,8 +174,8 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
         this->create_publisher<std_msgs::msg::UInt16>("/enemy_base_health", 10);
     our_outpost_health_pub_ =
         this->create_publisher<std_msgs::msg::UInt16>("/our_outpost_health", 10);
-    can_rebuild_sentry_pub_ =
-        this->create_publisher<std_msgs::msg::Bool>("/can_rebuild_sentry", 10);
+    can_rebuild_outpost_pub_ =
+        this->create_publisher<std_msgs::msg::Bool>("/can_rebuild_outpost", 10);
     remain_ammo_pub_ = this->create_publisher<std_msgs::msg::UInt16>("/remain_ammo", 10);
 
     // Detect parameter client
@@ -422,17 +422,17 @@ void RMSerialDriver::receiveData()
                     //std::cout<<"our_outpostHP: " << our_outpostHP.data << std::endl;
                     std_msgs::msg::UInt16 remain_ammo;
                     remain_ammo.data = packet.remain_ammo;
-                    std_msgs::msg::Bool can_rebuild_sentry;
-                    can_rebuild_sentry.data = packet.can_rebuild_sentry;
+                    std_msgs::msg::Bool can_rebuild_outpost;
+                    can_rebuild_outpost.data = packet.can_rebuild_outpost;
 
-                    //std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " remain ammo: " << remain_ammo.data << " our_outpostHP: " << our_outpostHP.data << " can_rebuild_sentry: " << can_rebuild_sentry.data << std::endl;
+                    //std::cout<<"sentryHP: " << sentryHP.data << " our_baseHP: " << our_baseHP.data << " remain ammo: " << remain_ammo.data << " our_outpostHP: " << our_outpostHP.data << " can_rebuild_outpost: " << can_rebuild_outpost.data << std::endl;
 
                     sentry_health_pub_->publish(sentryHP);
                     our_base_health_pub_->publish(our_baseHP);
                     enemy_base_health_pub_->publish(enemy_baseHP);
                     our_outpost_health_pub_->publish(our_outpostHP);
                     remain_ammo_pub_->publish(remain_ammo);
-                    can_rebuild_sentry_pub_->publish(can_rebuild_sentry);
+                    can_rebuild_outpost_pub_->publish(can_rebuild_outpost);
 
                 } else {
                     RCLCPP_ERROR(get_logger(), "CRC error!");
