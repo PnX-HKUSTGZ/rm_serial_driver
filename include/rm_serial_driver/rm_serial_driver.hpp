@@ -191,7 +191,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr our_base_health_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr enemy_base_health_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr our_outpost_health_pub_;
-    rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr enemy_outpost_health_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr can_rebuild_sentry_pub_;
 
     std::thread receive_thread_;
 

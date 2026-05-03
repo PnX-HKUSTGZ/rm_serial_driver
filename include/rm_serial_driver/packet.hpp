@@ -24,8 +24,8 @@ struct ReceivePacket
   uint16_t our_baseHP;
   uint16_t enemy_baseHP;
   uint16_t our_outpostHP;
-  uint16_t enemy_outpostHP;
-  uint16_t remain_ammo;
+  uint16_t remain_ammo; // 剩余发弹量
+  bool can_rebuild_sentry; // 是否可以重建哨兵
   float yaw_imu_q[4];  // x y z w for odom_omni IMU
   float aim_imu_q[4];  // x y z w for odom_aim IMU
   float motor_yaw;     // small yaw motor feedback (rad)
