@@ -19,13 +19,13 @@ struct ReceivePacket
   uint8_t detect_color : 1;  // 0-red 1-blue
   //uint8_t set_mode : 4; // 0-outpost 6-guard 7-base 8-rune 9-auto
   uint8_t game_start : 1;
-  uint8_t reserved : 6;
+  uint8_t can_rebuild_outpost : 1;  // 是否可以重建前哨站
+  uint8_t reserved : 5;
   uint16_t sentryHP;
   uint16_t our_baseHP;
   uint16_t enemy_baseHP;
   uint16_t our_outpostHP;
   uint16_t remain_ammo; // 剩余发弹量
-  bool can_rebuild_outpost; // 是否可以重建前哨站
   float yaw_imu_q[4];  // x y z w for odom_omni IMU
   float aim_imu_q[4];  // x y z w for odom_aim IMU
   float motor_yaw;     // small yaw motor feedback (rad)
