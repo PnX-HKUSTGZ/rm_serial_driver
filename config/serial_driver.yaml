@@ -7,4 +7,3 @@
     stop_bits: "1"
     cmd_vel_linear_scale: 0.4
     nav_packet_version: 2
-    follow_mark_timeout_sec: 0.5

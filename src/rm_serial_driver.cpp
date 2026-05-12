@@ -154,7 +154,6 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
         std::max(0.0, this->declare_parameter("lidar_tf_max_stamp_diff_sec", 0.05));
     pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true); 
     cmd_vel_linear_scale_ = this->declare_parameter("cmd_vel_linear_scale", 0.4);
-    follow_mark_timeout_sec_ = std::max(0.0, this->declare_parameter("follow_mark_timeout_sec", 0.5));
     nav_packet_version_ = this->declare_parameter("nav_packet_version", 1);
     if (nav_packet_version_ != 1 && nav_packet_version_ != 2) {
         RCLCPP_WARN(
@@ -202,6 +201,13 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
             this->setDecisionCallback(request, response);
         });
 
+    change_follow_mark_service_server_ = this->create_service<std_srvs::srv::SetBool>(
+        "/change_follow_mark", [this](
+                                   const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+                                   std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+            this->changeFollowMarkCallback(request, response);
+        });
+
     try {
         serial_driver_->init_port(device_name_, *device_config_);
         if (!serial_driver_->port()->is_open()) {
@@ -233,11 +239,6 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     nav_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel_chassis", rclcpp::QoS(rclcpp::KeepLast(1)),
         std::bind(&RMSerialDriver::navCallback, this, std::placeholders::_1));
-
-    const auto follow_mark_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-    follow_mark_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
-        "/chassis/follow_mark", follow_mark_qos,
-        std::bind(&RMSerialDriver::followMarkCallback, this, std::placeholders::_1));
 }
 
 RMSerialDriver::~RMSerialDriver()
@@ -751,26 +752,10 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
         const float angular_z = static_cast<float>(msg->angular.z);
 
         if (nav_packet_version_ == 2) {
-            uint8_t follow_mark = 1;
-            bool follow_mark_fresh = false;
-            const rclcpp::Time now = this->now();
+            uint8_t follow_mark = 0;
             {
                 std::lock_guard<std::mutex> lock(follow_mark_mutex_);
-                if (has_follow_mark_) {
-                    const double age_sec = (now - latest_follow_mark_stamp_).seconds();
-                    if (age_sec <= follow_mark_timeout_sec_) {
-                        follow_mark = latest_follow_mark_;
-                        follow_mark_fresh = true;
-                    }
-                }
-            }
-
-            if (!follow_mark_fresh) {
-                follow_mark = 1;
-                RCLCPP_DEBUG_THROTTLE(
-                    get_logger(), *get_clock(), 2000,
-                    "follow_mark unavailable or timeout (%.3fs), fallback to 1",
-                    follow_mark_timeout_sec_);
+                follow_mark = follow_mark_;
             }
 
             SendNavPacketV2 packet;
@@ -780,8 +765,7 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
             packet.angular_x = angular_x;
             packet.angular_y = angular_y;
             packet.angular_z = angular_z;
-            packet.follow_mark = follow_mark; 
-            packet.follow_mark = 0; // 设置为0，联盟赛没必要做底盘跟随
+            packet.follow_mark = follow_mark;
 
             crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 
@@ -809,24 +793,20 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
     }
 }
 
-void RMSerialDriver::followMarkCallback(const std_msgs::msg::UInt8::SharedPtr msg)
+void RMSerialDriver::changeFollowMarkCallback(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response)
 {
-    std::lock_guard<std::mutex> lock(follow_mark_mutex_);
-    if (msg) {
-        if (msg->data <= 1U) {
-            latest_follow_mark_ = msg->data;
-        } else {
-            latest_follow_mark_ = 1U;
-            RCLCPP_WARN_THROTTLE(
-                get_logger(), *get_clock(), 2000,
-                "follow_mark=%u is invalid, fallback to 1", msg->data);
-        }
-        has_follow_mark_ = true;
-        latest_follow_mark_stamp_ = this->now();
-    } else {
-        latest_follow_mark_ = 1;
-        has_follow_mark_ = false;
+    const uint8_t follow_mark = request->data ? 1U : 0U;
+    {
+        std::lock_guard<std::mutex> lock(follow_mark_mutex_);
+        follow_mark_ = follow_mark;
     }
+
+    response->success = true;
+    response->message = "follow_mark set to " + std::to_string(follow_mark);
+    RCLCPP_INFO(
+        get_logger(), "follow_mark set to %u", static_cast<unsigned int>(follow_mark));
 }
 
 void RMSerialDriver::setDecisionCallback(

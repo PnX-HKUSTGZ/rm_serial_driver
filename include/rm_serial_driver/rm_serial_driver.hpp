@@ -20,7 +20,6 @@
 #include <std_msgs/msg/float64.hpp>
 #include <unordered_map>
 #include <std_msgs/msg/u_int16.hpp>
-#include <std_msgs/msg/u_int8.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
@@ -57,11 +56,13 @@ private:
     void aimPointCallback(const auto_aim_interfaces::msg::Firecontrol::SharedPtr msg);
 
     void navCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
-    void followMarkCallback(const std_msgs::msg::UInt8::SharedPtr msg);
 
     void updateOdomTransforms();
 
     void setDecisionCallback(
+        const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+        std::shared_ptr<std_srvs::srv::SetBool::Response> response);
+    void changeFollowMarkCallback(
         const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
         std::shared_ptr<std_srvs::srv::SetBool::Response> response);
 
@@ -117,6 +118,7 @@ private:
 
     // Service server to deal with decision
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_decision_service_server_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr change_follow_mark_service_server_;
 
     // Aimimg point receiving from serial port for visualization
     visualization_msgs::msg::Marker aiming_point_;
@@ -127,7 +129,6 @@ private:
 
     rclcpp::Subscription<auto_aim_interfaces::msg::Firecontrol>::SharedPtr target_sub_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr nav_sub_;
-    rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr follow_mark_sub_;
 
     tf2::Quaternion yaw_imu_q_{0, 0, 0, 1};
     tf2::Quaternion aim_imu_q_{0, 0, 0, 1};
@@ -171,10 +172,7 @@ private:
     std::mutex transform_mutex_;
 
     std::mutex follow_mark_mutex_;
-    uint8_t latest_follow_mark_ = 1;
-    rclcpp::Time latest_follow_mark_stamp_;
-    bool has_follow_mark_ = false;
-    double follow_mark_timeout_sec_ = 0.5;
+    uint8_t follow_mark_ = 0;
     int nav_packet_version_ = 1;
 
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
