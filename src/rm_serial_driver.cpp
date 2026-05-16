@@ -744,8 +744,8 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
     try {
-        const float linear_x = -static_cast<float>(msg->linear.x) * cmd_vel_linear_scale_;
-        const float linear_y = -static_cast<float>(msg->linear.y) * cmd_vel_linear_scale_;
+        const float linear_x = static_cast<float>(msg->linear.x) * cmd_vel_linear_scale_;
+        const float linear_y = static_cast<float>(msg->linear.y) * cmd_vel_linear_scale_;
         const float linear_z = static_cast<float>(msg->linear.z);
         const float angular_x = static_cast<float>(msg->angular.x);
         const float angular_y = static_cast<float>(msg->angular.y);
