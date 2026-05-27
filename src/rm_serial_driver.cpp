@@ -9,8 +9,8 @@
 #include <tf2_ros/transform_listener.h>
 
 #include <algorithm>
-#include <iostream>
 #include <cmath>
+#include <iostream>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/qos.hpp>
 #include <rclcpp/utilities.hpp>
@@ -155,6 +155,24 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
     pitch_imu_enabled_ = this->declare_parameter("pitch_imu_enabled", true); 
     cmd_vel_linear_scale_ = this->declare_parameter("cmd_vel_linear_scale", 0.4);
     nav_packet_version_ = this->declare_parameter("nav_packet_version", 1);
+    auto follow_mark_default_value = this->declare_parameter("follow_mark_default_value", 2);
+    auto follow_mark_start_value = this->declare_parameter("follow_mark_start_value", 1);
+    auto follow_mark_rough_value = this->declare_parameter("follow_mark_rough_value", 0);
+    follow_mark_hold_nav_count_ =
+        static_cast<int>(std::max<int64_t>(
+            0, this->declare_parameter("follow_mark_hold_nav_count", 10)));
+    follow_mark_zero_linear_scale_ =
+        std::max(0.0, this->declare_parameter("follow_mark_zero_linear_scale", 0.5));
+    follow_mark_default_value = std::max<int64_t>(
+        0, std::min<int64_t>(follow_mark_default_value, UINT8_MAX));
+    follow_mark_start_value =
+        std::max<int64_t>(0, std::min<int64_t>(follow_mark_start_value, UINT8_MAX));
+    follow_mark_rough_value =
+        std::max<int64_t>(0, std::min<int64_t>(follow_mark_rough_value, UINT8_MAX));
+    follow_mark_default_value_ = static_cast<uint8_t>(follow_mark_default_value);
+    follow_mark_start_value_ = static_cast<uint8_t>(follow_mark_start_value);
+    follow_mark_rough_value_ = static_cast<uint8_t>(follow_mark_rough_value);
+    follow_mark_ = follow_mark_default_value_;
     if (nav_packet_version_ != 1 && nav_packet_version_ != 2) {
         RCLCPP_WARN(
             get_logger(), "Invalid nav_packet_version=%d, fallback to v1", nav_packet_version_);
@@ -319,7 +337,8 @@ void RMSerialDriver::receiveData()
                     {
                         double roll, pitch, yaw;
                         tf2::Matrix3x3(yaw_q).getRPY(roll, pitch, yaw);
-                        yaw_q.setRPY(-roll, -pitch, yaw);
+                        std::cerr << "roll: " << roll << "pitch: " << pitch << "yaw: " << yaw << std::endl;
+                        yaw_q.setRPY(roll, pitch, yaw);
                     }
                     if (!sanitizeQuaternion(
                             yaw_q, get_logger(), *get_clock(), "receiveData:yaw_q_converted")) {
@@ -343,6 +362,8 @@ void RMSerialDriver::receiveData()
                     } else {
                         // When pitch IMU is absent, derive aim orientation from yaw IMU plus motor feedback.
                         tf2::Quaternion q_mech;
+                        std::cerr << "pitch: " << static_cast<double>(motor_pitch) << " " 
+                                  << "yaw: " << static_cast<double>(motor_yaw) << std::endl;
                         q_mech.setRPY(
                             0.0, static_cast<double>(motor_pitch), static_cast<double>(motor_yaw));
                         if (!sanitizeQuaternion(
@@ -744,20 +765,30 @@ void RMSerialDriver::aimPointCallback(const auto_aim_interfaces::msg::Firecontro
 void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
     try {
-        const float linear_x = static_cast<float>(msg->linear.x) * cmd_vel_linear_scale_;
-        const float linear_y = static_cast<float>(msg->linear.y) * cmd_vel_linear_scale_;
+        uint8_t follow_mark = follow_mark_default_value_;
+        {
+            std::lock_guard<std::mutex> lock(follow_mark_mutex_);
+            follow_mark = follow_mark_;
+            if (follow_mark_hold_remaining_ > 0) {
+                --follow_mark_hold_remaining_;
+                if (follow_mark_hold_remaining_ == 0) {
+                    follow_mark_ = follow_mark_rough_value_;
+                }
+            }
+        }
+
+        const double follow_linear_scale =
+            (follow_mark == 0U) ? follow_mark_zero_linear_scale_ : 1.0;
+        const float linear_x =
+            static_cast<float>(msg->linear.x * cmd_vel_linear_scale_ * follow_linear_scale);
+        const float linear_y =
+            static_cast<float>(msg->linear.y * cmd_vel_linear_scale_ * follow_linear_scale);
         const float linear_z = static_cast<float>(msg->linear.z);
         const float angular_x = static_cast<float>(msg->angular.x);
         const float angular_y = static_cast<float>(msg->angular.y);
         const float angular_z = static_cast<float>(msg->angular.z);
 
         if (nav_packet_version_ == 2) {
-            uint8_t follow_mark = 0;
-            {
-                std::lock_guard<std::mutex> lock(follow_mark_mutex_);
-                follow_mark = follow_mark_;
-            }
-
             SendNavPacketV2 packet;
             packet.linear_x = linear_x;
             packet.linear_y = linear_y;
@@ -771,6 +802,8 @@ void RMSerialDriver::navCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 
             std::vector<uint8_t> data = toVector(packet);
             std::lock_guard<std::mutex> lock(mutex_);
+            //std::cerr << "start publish Nav packet :" << std::endl;
+            //std::cerr << "packet.linear_x  "<< "packet.linear_y  "<< "packet.linear_z" <<std::endl;
             serial_driver_->port()->send(data);
         } else {
             SendNavPacket packet;
@@ -797,16 +830,28 @@ void RMSerialDriver::changeFollowMarkCallback(
     const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
     std::shared_ptr<std_srvs::srv::SetBool::Response> response)
 {
-    const uint8_t follow_mark = request->data ? 1U : 0U;
+    uint8_t follow_mark = follow_mark_default_value_;
+    int hold_remaining = 0;
     {
         std::lock_guard<std::mutex> lock(follow_mark_mutex_);
+        if (request->data) {
+            if (follow_mark_hold_nav_count_ > 0) {
+                follow_mark = follow_mark_start_value_;
+                hold_remaining = follow_mark_hold_nav_count_;
+            } else {
+                follow_mark = follow_mark_rough_value_;
+            }
+        }
+
         follow_mark_ = follow_mark;
+        follow_mark_hold_remaining_ = hold_remaining;
     }
 
     response->success = true;
     response->message = "follow_mark set to " + std::to_string(follow_mark);
     RCLCPP_INFO(
-        get_logger(), "follow_mark set to %u", static_cast<unsigned int>(follow_mark));
+        get_logger(), "follow_mark set to %u, hold_remaining=%d",
+        static_cast<unsigned int>(follow_mark), hold_remaining);
 }
 
 void RMSerialDriver::setDecisionCallback(

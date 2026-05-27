@@ -172,7 +172,13 @@ private:
     std::mutex transform_mutex_;
 
     std::mutex follow_mark_mutex_;
-    uint8_t follow_mark_ = 0;
+    uint8_t follow_mark_ = 2;
+    uint8_t follow_mark_default_value_ = 2;
+    uint8_t follow_mark_start_value_ = 1;
+    uint8_t follow_mark_rough_value_ = 0;
+    int follow_mark_hold_nav_count_ = 10;
+    int follow_mark_hold_remaining_ = 0;
+    double follow_mark_zero_linear_scale_ = 0.5;
     int nav_packet_version_ = 1;
 
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
